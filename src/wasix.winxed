@@ -1,0 +1,3055 @@
+#! winxed
+
+// wasix: a simple old style Basic interpreter
+// Revision 24-jun-2010
+
+/*
+
+        Instructions:
+
+CHAIN
+CLEAR
+CLOSE
+CONT
+DELETE
+DIM
+END
+ERROR
+EXIT
+FOR
+GOSUB
+GOTO
+IF
+LET
+LINE INPUT
+LIST
+LOAD
+NEW
+NEXT
+OPEN
+PRINT
+REM
+REPEAT
+RETURN
+RUN
+SAVE
+STOP
+TROFF
+TRON
+UNTIL
+WEND
+WHILE
+
+        Functions:
+
+ACOS
+ASC
+ASIN
+ATN
+CHR$
+COS
+INSTR
+LEFT$
+LEN
+MID$
+NEW
+RIGHT$
+SIN
+SQR
+STRING$
+TAN
+
+*/
+
+// No number, direct command.
+const int DIRECT = -1;
+
+// Token types
+const int IDENTIFIER = 0;
+const int INTEGER    = 1;
+const int FLOAT      = 2;
+const int STRING     = 3;
+const int OP         = 4;
+
+// Runner states
+const int RUNstart    = 0;
+const int RUNend      = 1;
+const int RUNinteract = 2;
+const int RUNrun      = 3;
+const int RUNrunning  = 4;
+const int RUNgoto     = 5;
+const int RUNerror    = 6;
+const int RUNexit     = 7;
+
+// Open modes and flags
+const int OPEN_input = 1;
+const int OPEN_output = 2;
+const int OPEN_mode_mask = 3;
+const int OPEN_binary = 4;
+
+// Error codes
+const int ERR_no_error       =  0;
+const int ERR_without_for    =  1;
+const int ERR_syntax         =  2;
+const int ERR_without_gosub  =  3;
+
+const int ERR_no_line        =  8;
+
+const int ERR_cant_cont      = 17;
+
+const int ERR_without_next   =  26;
+
+const int ERR_without_wend   =  29;
+const int ERR_without_while  =  30;
+const int ERR_not_open       =  31;
+
+const int ERR_return_missing = 97;
+const int ERR_load           = 98;
+const int ERR_stop           = 99;
+
+function errmsg(int code)
+{
+    string str;
+    switch(code) {
+    case ERR_without_for:    str = 'Unexpected NEXT'; break;
+    case ERR_syntax:         str = 'Syntax error'; break;
+    case ERR_without_gosub:  str = 'Unexpected RETURN'; break;
+
+    case ERR_no_line:        str = 'Line does not exist'; break;
+
+    case ERR_cant_cont:      str = 'Cannot CONTinue'; break;
+
+    case ERR_without_next:   str = 'NEXT missing'; break;
+
+    case ERR_without_wend:   str = 'WEND missing'; break;
+    case ERR_without_while:  str = 'Unexpected WEND'; break;
+    case ERR_not_open:       str = 'File not open'; break;
+
+    case ERR_return_missing: str = 'RETURN missing'; break;
+    case ERR_load:           str = 'Cannot load file'; break;
+    case ERR_stop:           str = 'Stop'; break;
+    default:
+        str = code;
+        str = 'Unknown error code(' + str + ')';
+    }
+    return str;
+}
+
+//**********************************************************************
+
+function isstartidentifier(string c)
+{
+    int i = indexof('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ', c);
+    return i != -1;
+}
+
+function isidentifier(string c)
+{
+    int i = indexof('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', c);
+    return i != -1;
+}
+
+function isdigit(string c)
+{
+    int i = indexof('0123456789', c);
+    return i != -1;
+}
+
+function getdigits(string str)
+{
+    int n = length(str);
+    int i = 0;
+    while (i < n && indexof('01234567890', substr(str, i, 1)) > -1)
+        ++i;
+    return i;
+}
+
+function parseline(string str)
+{
+    int i = getdigits(str);
+    int numline;
+    string linecontent;
+    if (i > 0) {
+        string sline = substr(str, 0, i);
+        numline = sline;
+        int n = length(str);
+        while (i < n - 1 && substr(str, i, 1) == ' ')
+            ++i;
+        if (i < n)
+            linecontent = substr(str, i);
+    }
+    else {
+        linecontent = str;
+        numline = DIRECT;
+    }
+    return new ProgramLine().init(numline, linecontent);
+}
+
+//**********************************************************************
+
+class Token
+{
+    var t;
+    var str;
+    function init(int type, var str)
+    {
+        self.t = type;
+        self.str = str;
+        return self;
+    }
+    function type()
+    {
+        return self.t;
+    }
+    function isop(string op)
+    {
+        return self.t == OP && self.str == op;
+    }
+    function isidentifier(string name)
+    {
+        return self.t == IDENTIFIER && self.str == name;
+    }
+    function checkidentifier()
+    {
+        if (self.t == IDENTIFIER)
+            return string(self.str);
+        return '';
+    }
+    function get()
+    {
+        return self.str;
+    }
+    function getint()
+    {
+        return int(self.str);
+    }
+    function getfloat()
+    {
+        return float(self.str);
+    }
+}
+
+//**********************************************************************
+
+function parsechunks(string str)
+{
+    var tokens = [];
+    int n = length(str);
+    int i = 0;
+    while (i < n) {
+        var tok;
+        string t = '';
+        string c = substr(str, i, 1);
+        if (c == ' ' || c == "\t") {
+            t = c;
+            ++i;
+            while (i < n && ((c= substr(str, i, 1)) == ' ' || c == "\t")) {
+                t += c;
+                ++i;
+            }
+            continue;
+        }
+        else if (isstartidentifier(c)) {
+            do {
+                int uc = indexof('abcdefghijklmnopqrstuvwxyz', c);
+                if (uc > -1)
+                    c = substr("ABCDEFGHIJKLMNOPQRSTUVWXYZ", uc, 1);
+                t += c;
+                ++i;
+            } while (i < n && (isidentifier( c= substr(str, i, 1))));
+            if (i < n && c == '$') {
+                t+= c;
+                ++i;
+            }
+            tok = new Token().init(IDENTIFIER, t);
+        }
+        else if (isdigit(c) || c == '.') {
+            int isfloat = 0;
+            if (isdigit(c)) {
+                do {
+                    t += c;
+                    ++i;
+                } while (i < n && (isdigit( c= substr(str, i, 1))));
+            }
+            if (i < n && c == '.') {
+                isfloat = 1;
+                do {
+                    t += c;
+                    ++i;
+                } while (i < n && (isdigit( c= substr(str, i, 1))));
+            }
+            if (i < n && (c == 'e' || c == 'E')) {
+                isfloat = 1;
+                do {
+                    t += c;
+                    ++i;
+                } while (i < n && (isdigit( c= substr(str, i, 1))));
+            }
+            if (isfloat) {
+                if (t == '.')
+                    tok = new Token().init(OP, t);
+                else {
+                    float fval = t;
+                    tok = new Token().init(FLOAT, fval);
+                }
+            }
+            else {
+                int ival = t;
+                tok = new Token().init(INTEGER, ival);
+            }
+        }
+        else if (c == '"') {
+            for (++i; i < n && (c = substr(str, i, 1)) != '"'; ++i)
+                t += c;
+            ++i;
+            tok = new Token().init(STRING, t);
+        }
+        else {
+            t = c;
+            if (++i < n) {
+                string c1 = substr(str, i, 1);
+                if (c == '<' && (c1 == '>' || c1 == '=')) {
+                    t += c1;
+                    ++i;
+                }
+                else if (c == '>' && c1 == '=') {
+                    t += c1;
+                    ++i;
+                }
+            }
+            tok = new Token().init(OP, t);
+        }
+        tokens.push(tok);
+    }
+    int ntok = tokens;
+    var chunks = [];
+    var items = [];
+    for (i = 0; i < ntok; ++i) {
+        var token = tokens[i];
+        if (token.isop(':') || token.isidentifier("THEN")) {
+            if (int(items) > 0)
+                chunks.push(new Chunk().init(items));
+            items = [];
+        }
+        else if (token.isidentifier("ELSE")) {
+            if (int(items) > 0)
+                chunks.push(new Chunk().init(items));
+            items = [];
+            items.push(token);
+                chunks.push(new Chunk().init(items));
+            items = [];
+        }
+        else
+            items.push(token);
+    }
+    if (int(items) > 0)
+        chunks.push(new Chunk().init(items));
+    return chunks;
+}
+
+//**********************************************************************
+
+class Matrix
+{
+    var numdims;
+    var dims;
+    var values;
+    function init(runner, initdims)
+    {
+        int n = initdims;
+        int dims[n];
+        int size = 1;
+        for (int i = 0; i < n; ++i) {
+            var vdim = initdims[i].eval(runner);
+            int dim = vdim;
+            ++dim;
+            size = size * dim;
+            dims[i] = dim;
+        }
+        self.numdims = n;
+        self.dims = dims;
+        var values[size];
+        for (int v = 0; v < size; ++v) {
+            var value = 0;
+            values[v] = value;
+        }
+        self.values = values;
+        return self;
+    }
+}
+
+function parsedims(var items)
+{
+    var dims = [];
+    //int n;
+    var aux;
+    do {
+        var expr = parseExpr(items);
+        if (expr == null)
+            return null;
+        dims.push(expr);
+        if (int(items) < 1)
+            return null;
+    } while ((aux = items.shift()).isop(','));
+    if (! aux.isop(')'))
+        return null;
+    return dims;
+}
+
+function dimoffset(runner, m, indexes)
+{
+    var dims = m.dims;
+    int n = indexes;
+    if (n != m.numdims)
+        return 0;
+    int offset = 0;
+    int mult = 1;
+    for (int i= n - 1; i >= 0; --i) {
+        var index = indexes[i].eval(runner);
+        int vind = index;
+        int dim = dims[i];
+        if (vind > dim)
+            die('return 0');
+        offset = offset + mult * vind;
+        mult = mult * dim;
+    }
+    return offset;
+}
+
+//**********************************************************************
+
+class ExprSyntaxError
+{
+    function eval(runner)
+    {
+        return null;
+    }
+}
+
+class ExprInteger
+{
+    var n;
+    function set(item)
+    {
+        int n = item.getint();
+        self.n = n;
+        return self;
+    }
+    function eval(runner)
+    {
+        return self.n;
+    }
+}
+
+class ExprFloat
+{
+    var n;
+    function set(item)
+    {
+        float n = item.getfloat();
+        self.n = n;
+        return self;
+    }
+    function eval(runner)
+    {
+        return self.n;
+    }
+}
+
+class ExprString
+{
+    var s;
+    function set(item)
+    {
+        string s = item.get();
+        self.s = s;
+        return self;
+    }
+    function eval(runner)
+    {
+        return self.s;
+    }
+}
+
+class ExprIdentifier
+{
+    var name;
+    function set(string name)
+    {
+        self.name = name;
+        return self;
+    }
+    function eval(runner)
+    {
+        return runner.getvar(self.name);
+    }
+}
+
+class ExprIndexed
+{
+    var name;
+    var indexes;
+    function parse(string name, items)
+    {
+        self.name = name;
+        if (int(items) < 1)
+            return new ExprSyntaxError();
+        if (!(items.shift()).isop('('))
+            return new ExprSyntaxError();
+        var indexes = parsedims(items);
+        if (indexes == null)
+            return new ExprSyntaxError();
+        self.indexes = indexes;
+        return self;
+    }
+    function eval(runner)
+    {
+        var m = runner.getvar(self.name);
+        int offset = dimoffset(runner, m, self.indexes);
+        return m.values[offset];
+    }
+}
+
+class ExprPredefFunction
+{
+    function init(items)
+    {
+        if (int(items) < 1)
+            return new ExprSyntaxError();
+        var item = items.shift();
+        if (!item.isop('('))
+            return new ExprSyntaxError();
+        self.initfunction(items);
+        if (int(items) < 1)
+            return new ExprSyntaxError();
+        item = items.shift();
+        if (!item.isop(')'))
+            return new ExprSyntaxError();
+        return self;
+    }
+}
+
+class ExprPredefArg1 : ExprPredefFunction
+{
+    var arg;
+    function initfunction(items)
+    {
+        self.arg = parseExpr(items);
+        return self;
+    }
+}
+
+class ExprPredefArg2 : ExprPredefFunction
+{
+    var arg1;
+    var arg2;
+    function initfunction(items)
+    {
+        self.arg1 = parseExpr(items);
+        if (int(items) < 1 || !(items.shift().isop(',')))
+            return new ExprSyntaxError();
+        self.arg2 = parseExpr(items);
+        return self;
+    }
+}
+
+class ExprPredefArg2_3 : ExprPredefFunction
+{
+    var arg1;
+    var arg2;
+    var arg3;
+    function initfunction(items)
+    {
+        self.arg1 = parseExpr(items);
+        if (int(items) < 1 || !(items.shift().isop(',')))
+            return new ExprSyntaxError();
+        self.arg2 = parseExpr(items);
+        if (int(items) < 1)
+            return new ExprSyntaxError();
+        var item = items[0];
+        if (item.isop(',')) {
+            items.shift();
+            self.arg3 = parseExpr(items);
+        }
+        return self;
+    }
+}
+
+class ExprNEW : ExprPredefFunction
+{
+    var cl;
+    function initfunction(items)
+    {
+        self.cl = parseExpr(items);
+        return self;
+    }
+    function eval(runner)
+    {
+        string clname = self.cl.eval(runner);
+        var obj = new clname();
+        return obj;
+    }
+}
+
+class ExprLEN : ExprPredefArg1
+{
+    function eval(runner)
+    {
+        var val = self.arg.eval(runner);
+        int l = length(val);
+        return l;
+    }
+}
+
+class ExprCHR : ExprPredefArg1
+{
+    function eval(runner)
+    {
+        var val = self.arg.eval(runner);
+        string s = chr(val);
+        return s;
+    }
+}
+
+class ExprASC : ExprPredefArg1
+{
+    function eval(runner)
+    {
+        var val = self.arg.eval(runner);
+        int code = ord(val);
+        return code;
+    }
+}
+
+class ExprLEFT : ExprPredefArg2
+{
+    function eval(runner)
+    {
+        var val1 = self.arg1.eval(runner);
+        var val2 = self.arg2.eval(runner);
+        string str = val1;
+        int l1 = length(str);
+        int l2 = val2;
+        string r = substr(str, 0, l2);
+        return r;
+    }
+}
+
+class ExprRIGHT : ExprPredefArg2
+{
+    function eval(runner)
+    {
+        var val1 = self.arg1.eval(runner);
+        var val2 = self.arg2.eval(runner);
+        string str = val1;
+        int l1 = length(str);
+        int l2 = val2;
+        if (l2 > l1)
+            l2 = l1;
+        return string(substr(str, l1 - l2));
+    }
+}
+
+class ExprMID : ExprPredefArg2_3
+{
+    function eval(runner)
+    {
+        var val1 = self.arg1.eval(runner);
+        var val2 = self.arg2.eval(runner);
+        var arg3 = self.arg3;
+        string str = val1;
+        int l2 = val2;
+        --l2;
+        string r;
+        if (arg3 != null) {
+            var val3 = arg3.eval(runner);
+            int l3 = val3;
+            r = substr(str, l2, l3);
+        }
+        else
+            r = substr(str, l2);
+        return r;
+    }
+}
+
+class ExprSTRING : ExprPredefArg2
+{
+    function eval(runner)
+    {
+        var val1 = self.arg1.eval(runner);
+        var val2 = self.arg2.eval(runner);
+        string str = val2;
+        int l = val1;
+        string r = str * l;
+        return r;
+    }
+}
+
+class ExprINSTR : ExprPredefArg2_3
+{
+    function eval(runner)
+    {
+        var val1 = self.arg1.eval(runner);
+        var val2 = self.arg2.eval(runner);
+        var arg3 = self.arg3;
+        string str1 = val1;
+        string str2 = val2;
+        int r;
+        if (arg3 != null) {
+            var val3 = arg3.eval(runner);
+            int l3 = val3;
+            --l3;
+            r = indexof(str1, str2, l3);
+        }
+        else
+            r = indexof(str1, str2);
+        ++r;
+        return r;
+    }
+}
+
+class ExprSQR : ExprPredefArg1
+{
+    function eval(runner)
+    {
+        var val = self.arg.eval(runner);
+        float l = sqrt(val);
+        return l;
+    }
+}
+
+class ExprSIN : ExprPredefArg1
+{
+    function eval(runner)
+    {
+        var val = self.arg.eval(runner);
+        float l = sin(val);
+        return l;
+    }
+}
+
+class ExprCOS : ExprPredefArg1
+{
+    function eval(runner)
+    {
+        var val = self.arg.eval(runner);
+        float l = cos(val);
+        return l;
+    }
+}
+
+class ExprTAN : ExprPredefArg1
+{
+    function eval(runner)
+    {
+        var val = self.arg.eval(runner);
+        float l = tan(val);
+        return l;
+    }
+}
+
+class ExprATN : ExprPredefArg1
+{
+    function eval(runner)
+    {
+        var val = self.arg.eval(runner);
+        float l = atan(val);
+        return l;
+    }
+}
+
+class ExprUnaryMinus
+{
+    var subexpr;
+    function init(subexpr)
+    {
+        self.subexpr = subexpr;
+        return self;
+    }
+    function eval(runner)
+    {
+        var value = self.subexpr.eval(runner);
+        return -value;
+    }
+}
+
+class ExprBinaryOp
+{
+    var lexpr;
+    var rexpr;
+    function init(lexpr, rexpr)
+    {
+        self.lexpr = lexpr;
+        self.rexpr = rexpr;
+        return self;
+    }
+}
+
+class ExprMul : ExprBinaryOp
+{
+    function eval(runner)
+    {
+        var lval = self.lexpr.eval(runner);
+        var rval = self.rexpr.eval(runner);
+        if (lval == null || rval == null)
+            return null;
+        return lval * rval;
+    }
+}
+
+class ExprDiv : ExprBinaryOp
+{
+    function eval(runner)
+    {
+        var lval = self.lexpr.eval(runner);
+        var rval = self.rexpr.eval(runner);
+        if (lval == null || rval == null)
+            return null;
+        return lval / rval;
+    }
+}
+
+class ExprAdd : ExprBinaryOp
+{
+    function eval(runner)
+    {
+        var lval = self.lexpr.eval(runner);
+        var rval = self.rexpr.eval(runner);
+        if (lval == null || rval == null)
+            return null;
+        if ((lval instanceof 'String') && (rval instanceof 'String')) {
+            string lv = lval;
+            string rv = rval;
+            string v = lv + rv;
+            return v;
+        }
+        return lval + rval;
+    }
+}
+
+class ExprSub : ExprBinaryOp
+{
+    function eval(runner)
+    {
+        var lval = self.lexpr.eval(runner);
+        var rval = self.rexpr.eval(runner);
+        if (lval == null || rval == null)
+            return null;
+        var r= lval + - rval;
+        return r;
+    }
+}
+
+class ExprEqual : ExprBinaryOp
+{
+    function eval(runner)
+    {
+        var lval = self.lexpr.eval(runner);
+        var rval = self.rexpr.eval(runner);
+        if (lval == null || rval == null)
+            return null;
+        var r;
+        if (lval == rval) r = 1;
+        else r = 0;
+        return r;
+    }
+}
+
+class ExprNotEqual : ExprBinaryOp
+{
+    function eval(runner)
+    {
+        var lval = self.lexpr.eval(runner);
+        var rval = self.rexpr.eval(runner);
+        if (lval == null || rval == null)
+            return null;
+        var r;
+        if (lval == rval) r = 0;
+        else r = 1;
+        return r;
+    }
+}
+
+class ExprLess : ExprBinaryOp
+{
+    function eval(runner)
+    {
+        var lval = self.lexpr.eval(runner);
+        var rval = self.rexpr.eval(runner);
+        if (lval == null || rval == null)
+            return null;
+        var r;
+        if (lval < rval) r = 1;
+        else r = 0;
+        return r;
+    }
+}
+
+class ExprLessEqual : ExprBinaryOp
+{
+    function eval(runner)
+    {
+        var lval = self.lexpr.eval(runner);
+        var rval = self.rexpr.eval(runner);
+        if (lval == null || rval == null)
+            return null;
+        var r;
+        if (lval <= rval) r = 1;
+        else r = 0;
+        return r;
+    }
+}
+
+class ExprGreater : ExprBinaryOp
+{
+    function eval(runner)
+    {
+        var lval = self.lexpr.eval(runner);
+        var rval = self.rexpr.eval(runner);
+        if (lval == null || rval == null)
+            return null;
+        var r;
+        if (lval > rval) r = 1;
+        else r = 0;
+        return r;
+    }
+}
+
+class ExprGreaterEqual : ExprBinaryOp
+{
+    function eval(runner)
+    {
+        var lval = self.lexpr.eval(runner);
+        var rval = self.rexpr.eval(runner);
+        if (lval == null || rval == null)
+            return null;
+        var r;
+        if (lval >= rval) r = 1;
+        else r = 0;
+        return r;
+    }
+}
+
+//**********************************************************************
+
+class MemberExpr
+{
+    var subexpr;
+    var membername;
+
+    function init(subexpr, member)
+    {
+        self.subexpr = subexpr;
+        self.membername = member.get();
+        return self;
+    }
+    function eval(runner)
+    {
+        var left = self.subexpr.eval(runner);
+        string membername = self.membername;
+        var attr = getattribute(left, membername);
+        return attr;
+    }
+}
+
+//**********************************************************************
+
+class MethodExpr
+{
+    var subexpr;
+    var methodname;
+    var args;
+    function init(subexpr, method, items)
+    {
+        //say('MethodExpr.init');
+        self.subexpr = subexpr;
+        self.methodname = method.get();
+        self.args = [];
+        items.shift();
+        if (int(items) == 0)
+            return new ExprSyntaxError();
+        if (items[0].isop(')'))
+            items.shift();
+        else {
+            var t;
+            var arg;
+            do {
+                if (int(items) == 0)
+                    return new ExprSyntaxError();
+                arg = parseExpr(items);
+                self.args.push(arg);
+                if (int(items) == 0)
+                    return new ExprSyntaxError();
+            } while ((t = items.shift()).isop(','));
+            if (! t.isop(')'))
+                return new ExprSyntaxError();
+        }
+        //say('MethodExpr.init end');
+        return self;
+    }
+    function eval(runner)
+    {
+        //say('MethodExpr.eval');
+        var obj = self.subexpr.eval(runner);
+        string methodname = self.methodname;
+        var meth = find_method(obj, methodname);
+        var methargs = [];
+        for (var arg in self.args)
+            methargs.push(arg.eval(runner));
+        var res = callmethodwithargs(obj, meth, methargs);
+        //say('MethodExpr.eval end');
+        if (res == null)
+            return 0;
+        else
+            return res;
+    }
+}
+
+//**********************************************************************
+
+function checkFunction(string name, items)
+{
+    var expr;
+    switch(name) {
+    case 'ASC':
+        expr = new ExprASC(); break;
+    case 'CHR$':
+        expr = new ExprCHR(); break;
+    case 'INSTR':
+        expr = new ExprINSTR(); break;
+    case 'LEFT$':
+        expr = new ExprLEFT(); break;
+    case 'LEN':
+        expr = new ExprLEN(); break;
+    case 'MID$':
+        expr = new ExprMID(); break;
+    case 'NEW':
+        expr = new ExprNEW(); break;
+    case 'RIGHT$':
+        expr = new ExprRIGHT(); break;
+    case 'STRING$':
+        expr = new ExprSTRING(); break;
+    case 'SQR':
+        expr = new ExprSQR(); break;
+    case 'SIN':
+        expr = new ExprSIN(); break;
+    case 'COS':
+        expr = new ExprCOS(); break;
+    case 'TAN':
+        expr = new ExprTAN(); break;
+    case 'ATN':
+        expr = new ExprATN(); break;
+    default:
+        return null;
+    }
+    expr = expr.init(items);
+    return expr;
+}
+
+function parseIdentifier(itname, items)
+{
+    string name = itname.get();
+    var func = checkFunction(name, items);
+    if (func != null)
+        return func;
+    else {
+        if (int(items) > 0) {
+            if (items[0].isop('('))
+                return new ExprIndexed().parse(name, items);
+        }
+        return new ExprIdentifier().set(name);
+    }
+}
+
+function parseExpr_base(items)
+{
+    int n = items;
+    if (n == 0)
+        return new ExprSyntaxError();
+    var item = items.shift();
+    --n;
+    var subexpr;
+    switch(item.type()) {
+    case INTEGER:
+        subexpr = new ExprInteger().set(item);
+        break;
+    case FLOAT:
+        subexpr = new ExprFloat().set(item);
+        break;
+    case STRING:
+        subexpr = new ExprString().set(item);
+        break;
+    case IDENTIFIER:
+        subexpr = parseIdentifier(item, items);
+        break;
+    default:
+        if (item.isop('(')) {
+            subexpr = parseExpr(items);
+            n = items;
+            if (n == 0)
+                return new ExprSyntaxError();
+            item = items.shift();
+            if (!item.isop(')'))
+                return new ExprSyntaxError();
+        }
+        else
+            return new ExprSyntaxError();
+    }
+    return subexpr;
+}
+
+function parseExpr_member(items)
+{
+    var subexpr = parseExpr_base(items);
+    int n = items;
+    if (n > 0) {
+        var item = items[0];
+        if (item.isop('.')) {
+            if (n < 2)
+                return new ExprSyntaxError();
+            items.shift();
+            item = items.shift();
+            if (item.type() != STRING)
+                return new ExprSyntaxError();
+            if (n > 2) {
+                var t = items[0];
+                if (t.isop('('))
+                    return new MethodExpr().init(subexpr, item, items);
+            }
+            subexpr = new MemberExpr().init(subexpr, item);
+        }
+    }
+    return subexpr;
+}
+
+function parseExpr_unary(items)
+{
+    int n;
+    n = items;
+    if (n < 1)
+        return new ExprSyntaxError();
+    var item = items[0];
+    if (item.isop('-')) {
+        items.shift();
+        var subexpr = parseExpr_unary(items);
+        return new ExprUnaryMinus().init(subexpr);
+    }
+    else {
+        return parseExpr_member(items);
+    }
+}
+
+function parseExpr_mul(items)
+{
+    var lexpr = parseExpr_unary(items);
+    int n;
+    var item;
+more:
+    n = items;
+    if (n > 0) {
+        item = items[0];
+        if (item.isop('*') || item.isop('/')) {
+            items.shift();
+            var rexpr = parseExpr_unary(items);
+            var aux;
+            if (item.isop('*'))
+                aux = new ExprMul();
+            else
+                aux = new ExprDiv();
+            aux.init(lexpr, rexpr);
+            lexpr = aux;
+            goto more;
+        }
+    }
+    return lexpr;
+}
+
+function parseExpr_add(items)
+{
+    var lexpr = parseExpr_mul(items);
+    int n;
+    var item;
+more:
+    n = items;
+    if (n > 0) {
+        item = items[0];
+        if (item.isop('+') || item.isop('-')) {
+            items.shift();
+            var rexpr = parseExpr_mul(items);
+            var aux;
+            if (item.isop('+'))
+                aux = new ExprAdd();
+            else
+                aux = new ExprSub();
+            aux = aux.init(lexpr, rexpr);
+            lexpr = aux;
+            goto more;
+        }
+    }
+    return lexpr;
+}
+
+function parseExpr_equal(items)
+{
+    var lexpr = parseExpr_add(items);
+    int n;
+    var item;
+more:
+    n = items;
+    if (n > 0) {
+        item = items[0];
+        if (item.isop('=') || item.isop('<>') ||
+                    item.isop('<') || item.isop('>') ||
+                    item.isop('<=') || item.isop('>=')) {
+            items.shift();
+            var rexpr = parseExpr_add(items);
+            var aux;
+            if (item.isop('='))
+                aux = new ExprEqual();
+            else if (item.isop('<>'))
+                aux = new ExprNotEqual();
+            else if (item.isop('<'))
+                aux = new ExprLess();
+            else if (item.isop('>'))
+                aux = new ExprGreater();
+            else if (item.isop('<='))
+                aux = new ExprLessEqual();
+            else if (item.isop('>='))
+                aux = new ExprGreaterEqual();
+            aux.init(lexpr, rexpr);
+            lexpr = aux;
+            goto more;
+        }
+    }
+    return lexpr;
+}
+
+function parseExpr(items)
+{
+    return parseExpr_equal(items);
+}
+
+//**********************************************************************
+
+class ChunkBad
+{
+    function execute(runner, line, int chunk)
+    {
+        runner.seterror(line, chunk, ERR_syntax);
+        return 1;
+    }
+}
+
+function nomoreitems(chunk, items)
+{
+    int n = items;
+    if (n > 0)
+        return new ChunkBad();
+    else
+        return chunk;
+}
+
+class ChunkComment
+{
+    function init(var items)
+    {
+        int n;
+        while ((n = items) > 0)
+            items.shift();
+        return self;
+    }
+    function execute(runner, line, int chunk)
+    {
+        // Do nothing
+        return 1;
+    }
+}
+
+class ChunkNoArgs
+{
+    function init(var items)
+    {
+        int n = items;
+        if (n != 0)
+            return new ChunkBad();
+        else
+            return self;
+    }
+}
+
+class ChunkWithLine
+{
+    var linenum;
+    function init(var items)
+    {
+        int n = items;
+        if (n != 1)
+            return new ChunkBad();
+        else {
+            var item = items[0];
+            if (item.type() != INTEGER)
+                return new ChunkBad();
+            int linenum = item.getint();
+            self.linenum = linenum;
+            return self;
+        }
+    }
+}
+
+class ChunkWithRange
+{
+    var l_from;
+    var l_to;
+    function parse(items)
+    {
+        int n = items;
+        if (n == 0)
+            return new ChunkBad();
+        var item = items.shift();
+        int linefrom = -1;
+        int lineto = -1;
+        if (! item.isop('-')) {
+            if (item.type() != INTEGER)
+                return new ChunkBad();
+            linefrom = item.getint();
+            n = items;
+            if (n == 0)
+                lineto = linefrom;
+            else {
+                item = items.shift();
+                if (! item.isop('-'))
+                    return new ChunkBad();
+            }
+        }
+        n = items;
+        if (n != 0) {
+            item = items.shift();
+            if (item.type() != INTEGER)
+                return new ChunkBad();
+            lineto = item.getint();
+        }
+        self.l_from = linefrom;
+        self.l_to = lineto;
+        return self;
+    }
+}
+
+class ChunkWithCondition
+{
+    var condition;
+    function init(var items)
+    {
+        int n = items;
+        if (n == 0)
+            return new ChunkBad();
+        self.condition = parseExpr(items);
+        return self;
+    }
+}
+
+class ChunkNEW : ChunkNoArgs
+{
+    function execute(runner, line, int chunk)
+    {
+        runner.clearall();
+        runner.new();
+        runner.runstate = RUNstart;
+        return 1;
+    }
+}
+
+class ChunkCLEAR : ChunkNoArgs
+{
+    function execute(runner, line, int chunk)
+    {
+        runner.clearall();
+        return 0;
+    }
+}
+
+class ChunkRUN : ChunkNoArgs
+{
+    function execute(runner, line, int chunk)
+    {
+        runner.clearall();
+        runner.runstart();
+        return 1;
+    }
+}
+
+class ChunkEND : ChunkNoArgs
+{
+    function execute(runner, line, int chunk)
+    {
+        runner.runstate = RUNend;
+        return 1;
+    }
+}
+
+class ChunkSTOP : ChunkNoArgs
+{
+    function execute(runner, line, int chunk)
+    {
+        runner.dostop(line, chunk);
+        return 1;
+    }
+}
+
+class ChunkCONT : ChunkNoArgs
+{
+    function execute(runner, line, int chunk)
+    {
+        runner.docont(line, chunk);
+        return 1;
+    }
+}
+
+class ChunkGo : ChunkWithLine
+{
+    function go(runner)
+    {
+        runner.runstate = RUNgoto;
+        int linedest = runner.program.findline(self.linenum);
+        if (linedest != DIRECT) {
+            runner.gotopos(linedest, 0);
+            return 0;
+        }
+        else
+            return 1;
+    }
+}
+
+class ChunkGOTO : ChunkGo
+{
+    function execute(runner, line, int chunk)
+    {
+        if (self.go(runner))
+            runner.seterror(line, chunk, ERR_no_line);
+        return 1;
+    }
+}
+
+class ChunkGOSUB : ChunkGo
+{
+    function execute(runner, line, int chunk)
+    {
+        if (self.go(runner))
+            runner.seterror(line, chunk, ERR_no_line);
+        else
+            runner.pushret(line, chunk);
+        return 1;
+    }
+}
+
+class ChunkRETURN : ChunkNoArgs
+{
+    function execute(runner, line, int chunk)
+    {
+        if (runner.doreturn())
+            runner.seterror(line, chunk, ERR_without_gosub);
+        return 1;
+    }
+}
+
+class ChunkLIST
+{
+    function execute(runner, line, int chunk)
+    {
+        runner.list(runner.getstdout());
+        return 1;
+    }
+}
+
+class ChunkLISTargs : ChunkWithRange
+{
+    function init(l_from, l_to)
+    {
+        self.l_from = l_from;
+        self.l_to = l_to;
+        return self;
+    }
+    function execute(runner, line, int chunk)
+    {
+        runner.listlines(runner.getstdout(), self.l_from, self.l_to);
+        return 1;
+    }
+}
+
+function parseLIST(items)
+{
+    int n = items;
+    if (n == 0)
+        return new ChunkLIST();
+    else
+        return new ChunkLISTargs().parse(items);
+}
+
+class ChunkLOAD
+{
+    var progname;
+    function init(var items)
+    {
+        int n = items;
+        if (n < 1)
+            return new ChunkBad();
+        else {
+            self.progname = parseExpr(items);
+            return nomoreitems(self, items);
+        }
+    }
+    function execute(runner, line, int chunk)
+    {
+        var name = self.progname.eval(runner);
+        if (name == null) {
+            runner.seterror(line, chunk, ERR_syntax);
+            return 1;
+        }
+        if (runner.load(name, line, chunk))
+            return 1;
+        runner.runstate = RUNend;
+        return 1;
+    }
+}
+
+class ChunkCHAIN
+{
+    var progname;
+    function init(var items)
+    {
+        int n = items;
+        if (n < 1)
+            return new ChunkBad();
+        else {
+            self.progname = parseExpr(items);
+            return nomoreitems(self, items);
+        }
+    }
+    function execute(runner, line, int chunk)
+    {
+        var name = self.progname.eval(runner);
+        if (name == null) {
+            runner.seterror(line, chunk, ERR_syntax);
+            return 1;
+        }
+        if (runner.load(name, line, chunk))
+            return 1;
+        runner.runstart();
+        return 1;
+    }
+}
+
+function parseCHAIN(items)
+{
+    return new ChunkCHAIN().init(items);
+}
+
+class ChunkSAVE
+{
+    var progname;
+    function init(var items)
+    {
+        int n = items;
+        if (n < 1)
+            return new ChunkBad();
+        else {
+            self.progname = parseExpr(items);
+            return self;
+        }
+    }
+    function execute(runner, line, int chunk)
+    {
+        var name = self.progname.eval(runner);
+        if (name == null) {
+            runner.seterror(line, chunk, ERR_syntax);
+            return 1;
+        }
+        runner.save(name);
+        return 1;
+    }
+}
+
+class ChunkEXIT : ChunkNoArgs
+{
+    function execute(runner, line, int chunk)
+    {
+        runner.runstate = RUNexit;
+        return 1;
+    }
+}
+
+class ChunkLET
+{
+    var varname;
+    var value;
+    function init(string strname, var items)
+    {
+        self.varname = strname;
+        self.value = parseExpr(items);
+        return self;
+    }
+    function execute(runner, line, int chunk)
+    {
+        string varname = self.varname;
+        var value = self.value.eval(runner);
+        if (value == null) {
+            runner.seterror(line, chunk, ERR_syntax);
+            return 1;
+        }
+        return runner.setvar(varname, value);
+    }
+}
+
+class ChunkLETindexed
+{
+    var varname;
+    var indexes;
+    var value;
+    function init(string strname, var items)
+    {
+        self.varname = strname;
+        int n;
+        var aux;
+        var indexes = parsedims(items);
+        if (indexes == null)
+            return new ChunkBad();
+        self.indexes = indexes;
+        n = items;
+        if (n < 1)
+            return new ChunkBad();
+        aux = items.shift();
+        if (!aux.isop('='))
+            return new ChunkBad();
+        self.value = parseExpr(items);
+        return self;
+    }
+    function execute(runner, line, int chunk)
+    {
+        string varname = self.varname;
+        var value = self.value.eval(runner);
+        if (value == null) {
+            runner.seterror(line, chunk, ERR_syntax);
+            return 1;
+        }
+        var m = runner.getvar(varname);
+        int offset = dimoffset(runner, m, self.indexes);
+        var values = m.values;
+        values[offset] = value;
+    }
+}
+
+function parseLETname(var name, var items)
+{
+    string strname = name.str;
+    int n = items;
+    if (n == 0)
+        return new ChunkBad();
+    var t = items.shift();
+    if (t.isop('='))
+        return new ChunkLET().init(strname, items);
+    if (t.isop('('))
+        return new ChunkLETindexed().init(strname, items);
+    return new ChunkBad();
+}
+
+function parseLET(var items)
+{
+    int n = items;
+    if (n < 2)
+        return new ChunkBad();
+    var name = items.shift();
+    if (name.type() != IDENTIFIER)
+        return new ChunkBad();
+    else
+        return parseLETname(name, items);
+}
+
+class ChunkDIM
+{
+    var varname;
+    var dims;
+    function init(var items)
+    {
+        int n = items;
+        if (n < 2)
+            return new ChunkBad();
+        var name = items.shift();
+        if (name.type() != IDENTIFIER)
+            return new ChunkBad();
+        string strname = name.str;
+        if (--n == 0)
+            return new ChunkBad();
+        self.varname = strname;
+        var aux = items.shift();
+        if (!aux.isop('('))
+            return new ChunkBad();
+        var dims = parsedims(items);
+        if (dims == null)
+            return new ChunkBad();
+        self.dims = dims;
+        return self;
+    }
+    function execute(runner, line, int chunk)
+    {
+        var dims = self.dims;
+        var m = new Matrix().init(runner, dims);
+        return runner.setvar(self.varname, m);
+    }
+}
+
+class ChunkIF : ChunkWithCondition
+{
+    function execute(runner, line, int chunk)
+    {
+        var cond = self.condition.eval(runner);
+        if (cond) return 0;
+        else {
+            var chunks = line.chunks;
+            int n = chunks;
+            ++chunk;
+            int count = 1;
+            for (; chunk < n; ++chunk) {
+                var ch = chunks[chunk];
+                if (ch instanceof ChunkIF)
+                    ++count;
+                else if (ch instanceof ChunkELSE) {
+                    --count;
+                    if (count == 0)
+                        break;
+                }
+            }
+            if (count == 0) {
+                ++chunk;
+                runner.gotolinepos(line, chunk);
+            }
+            return 1;
+        }
+    }
+}
+
+class ChunkELSE : ChunkNoArgs
+{
+    function execute(runner, line, int chunk)
+    {
+        return 1;
+    }
+}
+
+class ChunkFOR
+{
+    var varname;
+    var initexpr;
+    var finalexpr;
+    var stepexpr;
+    function init(var items)
+    {
+        int n = items;
+        if (n < 2)
+            return new ChunkBad();
+        var varname = items.shift();
+        self.varname = varname.str;
+        var op = items.shift();
+        if (! op.isop('='))
+            return new ChunkBad();
+        self.initexpr = parseExpr(items);
+        n = items;
+        if (n < 2)
+            return new ChunkBad();
+        op = items.shift();
+        if (! op.isidentifier('TO'))
+            return new ChunkBad();
+        self.finalexpr = parseExpr(items);
+        n = items;
+        if (n > 0) {
+            op = items.shift();
+            if (!op.isidentifier('STEP'))
+                return new ChunkBad();
+            self.stepexpr = parseExpr(items);
+        }
+        return self;
+    }
+    function execute(runner, line, int chunk)
+    {
+        string varname = self.varname;
+        var value = self.initexpr.eval(runner);
+        if (value == null) {
+            runner.seterror(line, chunk, ERR_syntax);
+            return 1;
+        }
+        var finalval = self.finalexpr.eval(runner);
+        var stepval;
+        if (self.stepexpr != null)
+            stepval = self.stepexpr.eval(runner);
+        else
+            stepval = 1;
+        return runner.dofor(line, chunk, varname, value, finalval, stepval);
+    }
+}
+
+class ChunkNEXT
+{
+    function execute(runner, line, int chunk)
+    {
+        return runner.donext(line, chunk);
+    }
+}
+
+class ChunkNEXTvar : ChunkNEXT
+{
+    var varname;
+    function execute(runner, line, int chunk)
+    {
+        return runner.donext(line, chunk, self.varname);
+    }
+}
+
+function parseNEXT(var items)
+{
+    int n = items;
+    if (n == 0)
+        return new ChunkNEXT();
+    else {
+        var name = items.shift();
+        if (name.type() != IDENTIFIER)
+            return new ChunkBad();
+        n = items;
+        if (n != 0)
+            return new ChunkNEXT();
+        var chunk = new ChunkNEXTvar();
+        chunk.varname = name.checkidentifier();
+        return chunk;
+    }
+}
+
+class ChunkWHILE : ChunkWithCondition
+{
+    function execute(runner, line, int chunk)
+    {
+        var value = self.condition.eval(runner);
+        int v = value;
+        if (v) {
+            runner.dowhile(line, chunk);
+            return 0;
+        }
+        else {
+            var program = runner.program;
+            var proglines = program.lines;
+            int nlines = proglines;
+            int count = 1;
+            var curline = line;
+            int curch = chunk + 1;
+        nextcheck:
+            var chunks = curline.getchunks();
+            int nchunks = chunks;
+            for (; curch < nchunks; ++curch) {
+                var ch = chunks[curch];
+                if (ch instanceof ChunkWHILE)
+                    ++count;
+                else if (ch instanceof ChunkWEND) {
+                    --count;
+                    if (count == 0)
+                        break;
+                }
+            }
+            if (count > 0) {
+                curline = program.nextline(curline);
+                if (curline != null) {
+                    curch = 0;
+                    goto nextcheck;
+                }
+                runner.seterror(line, chunk, ERR_without_wend);
+            }
+            else
+                runner.gotolinepos(curline, curch + 1);
+            return 1;
+        
+        }
+    }
+}
+
+class ChunkWEND : ChunkNoArgs
+{
+    function execute(runner, line, int chunk)
+    {
+        return runner.dowend(line, chunk);
+    }
+}
+
+class ChunkREPEAT : ChunkNoArgs
+{
+    function execute(runner, line, int chunk)
+    {
+        return runner.dorepeat(line, chunk);
+    }
+}
+
+class ChunkUNTIL : ChunkWithCondition
+{
+    function execute(runner, line, int chunk)
+    {
+        var value = self.condition.eval(runner);
+        int v = value;
+        return runner.dountil(line, chunk, value);
+    }
+}
+
+class ChunkPRINT
+{
+    var channel;
+    var printitems;
+    function init(var items)
+    {
+        self.printitems = [];
+        var item;
+        int n = items;
+        if (n > 0) {
+            item = items[0];
+            if (item.isop('#')) {
+                items.shift();
+                self.channel = parseExpr(items);
+                n = items;
+                if (n > 0) {
+                    item = items.shift();
+                    if (!item.isop(','))
+                        return new ChunkBad();
+                }
+            }
+        }
+        var printitem;
+        while ((n = items) > 0) {
+            item = items[0];
+            if (item.isop(';') || item.isop(',')) {
+                printitem = item;
+                items.shift();
+            }
+            else
+                printitem = parseExpr(items);
+            self.printitems.push(printitem);
+        }
+        return self;
+    }
+    function execute(runner, line, int chunk)
+    {
+        int lastisval = 1;
+        var channel = self.channel;
+        var handle;
+        if (channel == null)
+            handle = runner.getstdout();
+        else {
+            var ch = channel.eval(runner);
+            int chnum = ch;
+            handle = runner.getchannel(chnum);
+            if (handle == null) {
+                runner.seterror(line, chunk, ERR_not_open);
+                return 1;
+            }
+        }
+        for (var item in self.printitems) {
+            if (item instanceof Token) {
+                if (item.isop(','))
+                    handle.print("\t");
+                lastisval = 0;
+            }
+            else {
+                var value = item.eval(runner);
+                if (value == null) {
+                    runner.seterror(line, chunk, ERR_syntax);
+                    return 1;
+                }
+                handle.print(value);
+                lastisval = 1;
+            }
+        }
+        if (lastisval)
+            handle.print("\n");
+        return 0;
+    }
+}
+
+class ChunkLINE_INPUT
+{
+    var channel;
+    var varname;
+    function init(var items)
+    {
+        int n = items;
+        if (n < 1)
+            return new ChunkBad();
+        var item = items[0];
+        if (item.isop('#')) {
+            items.shift();
+            self.channel = parseExpr(items);
+            item = items.shift();
+            if (!item.isop(','))
+                return new ChunkBad();
+        }
+        item = items.shift();
+        if (item.type() != IDENTIFIER)
+            return new ChunkBad();
+        string varname = item.checkidentifier();
+        if (varname == '')
+            return new ChunkBad();
+        self.varname = varname;
+        return self;
+    }
+    function execute(runner, line, int chunk)
+    {
+        var channel = self.channel;
+        var input;
+        var l;
+        if (channel == null) {
+            input = runner.getstdin();
+            l = input.readline();
+        }
+        else {
+            var ch = channel.eval(runner);
+            int chnum = ch;
+            input = runner.getchannel(ch);
+            if (input == null) {
+                runner.seterror(line, chunk, ERR_not_open);
+                return 1;
+            }
+            l = input.readline();
+        }
+        l = chomp(l);
+        runner.setvar(self.varname, l);
+        return 0;
+    }
+}
+
+class ChunkLINE
+{
+    function init(var items)
+    {
+        int n = items;
+        if (n < 1)
+            return new ChunkBad();
+        var item = items.shift();
+        if (!item.isidentifier('INPUT'))
+            return new ChunkBad();
+        return new ChunkLINE_INPUT().init(items);
+    }
+}
+
+class ChunkOPEN
+{
+    var filenameexpr;
+    var channelexpr;
+    var mode;
+    function init(var items)
+    {
+        self.filenameexpr = parseExpr(items);
+        int n = items;
+        if (n < 2)
+            return new ChunkBad();
+        var item = items.shift();
+        int mode = 0;
+        int flags = 0;
+        if (item.isidentifier('FOR')) {
+            item = items.shift();
+            if (item.isidentifier('BINARY')) {
+                flags = OPEN_binary;
+                item = items.shift();
+            }
+            switch(item.checkidentifier()) {
+            case 'INPUT':
+                mode = OPEN_input;
+                break;
+            case 'OUTPUT':
+                mode = OPEN_output;
+                break;
+            default:
+                return new ChunkBad();
+            }
+            item = items.shift();
+        }
+        if (!item.isidentifier('AS'))
+            return new ChunkBad();
+        self.channelexpr = parseExpr(items);
+        if (mode == 0)
+            mode = OPEN_input;
+        mode = mode | flags;
+        self.mode = mode;
+        return self;
+    }
+    function execute(runner, line, int chunk)
+    {
+        var filename = self.filenameexpr.eval(runner);
+        string strfile = filename;
+        var channel = self.channelexpr.eval(runner);
+        int chnum = channel;
+        int mode = self.mode;
+        int binmode = mode & OPEN_binary;
+        string modestr;
+        switch (mode & OPEN_mode_mask) {
+        case OPEN_input:
+            modestr = 'r';
+            break;
+        case OPEN_output:
+            modestr = 'w';
+            break;
+        default:
+            break;
+        }
+        if (binmode)
+            modestr += 't';
+        //say('OPEN ', strfile, chnum);
+        var handle = new 'FileHandle'.open(strfile, modestr);
+        if (! binmode)
+            handle.encoding('utf8');
+        runner.open(chnum, handle);
+    }
+}
+
+class ChunkCLOSE
+{
+    var channelexpr;
+    function init(var items)
+    {
+        int n = items;
+        if (n > 0) {
+            if (items[0].isop('#'))
+                items.shift();
+            self.channelexpr = parseExpr(items);
+        }
+        return self;
+    }
+    function execute(runner, line, int chunk)
+    {
+        var channelexpr = self.channelexpr;
+        if (channelexpr != null) {
+            var channel = channelexpr.eval(runner);
+            int chnum = channel;
+            runner.close(chnum);
+        }
+        else
+            runner.closeall();
+        return 0;
+    }
+}
+
+class ChunkTRON : ChunkNoArgs
+{
+    function execute(runner, line, int chunk)
+    {
+        runner.tron = 1;
+        return 0;
+    }
+}
+
+class ChunkTROFF : ChunkNoArgs
+{
+    function execute(runner, line, int chunk)
+    {
+        runner.tron = 0;
+        return 0;
+    }
+}
+
+class ChunkDELETE : ChunkWithRange
+{
+    function execute(runner, line, int chunk)
+    {
+        runner.deletelines(self.l_from, self.l_to);
+        runner.runstate = RUNend;
+        return 1;
+    }
+}
+
+class ChunkERROR
+{
+    var expr;
+    function parse(var items)
+    {
+        int n = items;
+        if (n == 0)
+            return new ChunkBad();
+        self.expr = parseExpr(items);
+        return self;
+    }
+    function execute(runner, line, int chunk)
+    {
+        var value = self.expr.eval(runner);
+        int errcode = value;
+        runner.seterror(line, chunk, errcode);
+        return 1;
+    }
+}
+
+//**********************************************************************
+
+class Chunk
+{
+    function init(var items)
+    {
+        int n = items;
+        var item = items.shift();
+        string str = item.checkidentifier();
+        switch(str) {
+        case 'REM':
+            return new ChunkComment().init(items);
+        case 'NEW':
+            return new ChunkNEW().init(items);
+        case 'CLEAR':
+            return new ChunkCLEAR().init(items);
+        case 'RUN':
+            return new ChunkRUN().init(items);
+        case 'END':
+            return new ChunkEND().init(items);
+        case 'STOP':
+            return new ChunkSTOP().init(items);
+        case 'CONT':
+            return new ChunkCONT().init(items);
+        case 'GOTO':
+            return new ChunkGOTO().init(items);
+        case 'GOSUB':
+            return new ChunkGOSUB().init(items);
+        case 'RETURN':
+            return new ChunkRETURN().init(items);
+        case 'LIST':
+            return parseLIST(items);
+        case 'LOAD':
+            return new ChunkLOAD().init(items);
+        case 'CHAIN':
+            return parseCHAIN(items);
+        case 'SAVE':
+            return new ChunkSAVE().init(items);
+        case 'EXIT':
+            return new ChunkEXIT().init(items);
+        case 'LET':
+            return parseLET(items);
+        case 'DIM':
+            return new ChunkDIM().init(items);
+        case 'IF':
+            return new ChunkIF().init(items);
+        case 'ELSE':
+            return new ChunkELSE().init(items);
+        case 'FOR':
+            return new ChunkFOR().init(items);
+        case 'NEXT':
+            return parseNEXT(items);
+        case 'WHILE':
+            return new ChunkWHILE().init(items);
+        case 'WEND':
+            return new ChunkWEND().init(items);
+        case 'REPEAT':
+            return new ChunkREPEAT().init(items);
+        case 'UNTIL':
+            return new ChunkUNTIL().init(items);
+        case 'PRINT':
+            return new ChunkPRINT().init(items);
+        case 'LINE':
+            return new ChunkLINE().init(items);
+        case 'OPEN':
+            return new ChunkOPEN().init(items);
+        case 'CLOSE':
+            return new ChunkCLOSE().init(items);
+        case 'TRON':
+            return new ChunkTRON().init(items);
+        case 'TROFF':
+            return new ChunkTROFF().init(items);
+        case 'DELETE':
+            return new ChunkDELETE().parse(items);
+        case 'ERROR':
+            return new ChunkERROR().parse(items);
+        default:
+            if (item.type() == IDENTIFIER)
+                return parseLETname(item, items);
+            if (item.isop('?'))
+                return new ChunkPRINT().init(items);
+            if (item.isop("'"))
+                return new ChunkComment().init(items);
+        }
+        return new ChunkBad();
+    }
+}
+
+//**********************************************************************
+
+class ProgramLine
+{
+    var numline;
+    var str;
+    var chunks;
+    function init(int numline, string content)
+    {
+        self.numline = numline;
+        self.str = content;
+        return self;
+    }
+    function getnum() { return self.numline; }
+    function isempty()
+    {
+        var str = self.str;
+        if (str == null || str == '') return 1;
+        else return 0;
+    }
+    function parse()
+    {
+        var chunks = parsechunks(self.str);
+        self.chunks = chunks;
+    }
+    function getchunks()
+    {
+        var chunks = self.chunks;
+        if (chunks == null) {
+            chunks = parsechunks(self.str);
+            self.chunks = chunks;
+        }
+        return chunks;
+    }
+}
+
+//**********************************************************************
+
+class Program
+{
+    var lines;
+
+    function init[vtable]()
+    {
+        self.lines = [];
+    }
+    function findlinepos(int numline)
+    {
+        var lines = self.lines;
+        int n = lines;
+        if (n == 0 || numline <= lines[0].getnum())
+            return 0;
+        if (n == 1)
+            return 1;
+        if (numline > lines[n-1].getnum())
+            return n;
+        int i1 = 0;
+        int i2 = n;
+        var line;
+        while (i2 - i1 > 1) {
+            int i3 = (i1 + i2) / 2;
+            line = lines[i3];
+            int nl = line.getnum();
+            if (nl == numline)
+                return i3;
+            else if (numline > nl)
+                i1 = i3;
+            else
+                i2 = i3;
+        }
+        return i2;
+    }
+    function findline(int numline)
+    {
+        var lines = self.lines;
+        int n = lines;
+        int i = self.findlinepos(numline);
+        if (i >= n)
+            i = DIRECT;
+        return i;
+    }
+    function nextline(var line)
+    {
+        int numline = line.getnum();
+        if (numline == DIRECT)
+            return null;
+        int l = self.findline(numline);
+        if (l == DIRECT)
+            return null;
+        ++l;
+        var lines = self.lines;
+        int n = lines;
+        if (l < n)
+            return lines[l];
+        else
+            return null;
+    }
+    function insert(var newline)
+    {
+        int numline = newline.getnum();
+        var lines = self.lines;
+        int n = lines;
+        int i = self.findlinepos(numline);
+        if (i < n) {
+            var line = lines[i];
+            if (line.getnum() != numline) {
+                var empty;
+                lines.push(empty);
+                for (int j = n; j > i; --j)
+                    lines[j] = lines[j - 1];
+            }
+        }
+        lines[i] = newline;
+    }
+    function delete(int numline)
+    {
+        var lines = self.lines;
+        int n = lines;
+        int i = self.findline(numline);
+        if (i < n) {
+            var curline = lines[i].getnum();
+            if (curline == numline) {
+                for (int j = i; j < n; ++j)
+                    lines[j] = lines[j + 1];
+                lines.pop();
+            }
+        }
+    }
+    function list(handle)
+    {
+        var lines = self.lines;
+        for (var line in lines) {
+            int numline = line.getnum();
+            string str = line.str;
+            handle.print(numline);
+            handle.print(' ');
+            handle.print(str);
+            handle.print("\n");
+        }
+    }
+    function listlines(handle, int l_from, int l_to)
+    {
+        var lines = self.lines;
+        int nlines = lines;
+        int i_from = self.findlinepos(l_from);
+        int i_to;
+        if (l_to == -1)
+            i_to = nlines;
+        else {
+            i_to  = self.findlinepos(l_to);
+            if (i_to < nlines)
+                if (lines[i_to].getnum() <= l_to)
+                    ++i_to;
+        }
+        for (int i= i_from; i < i_to; ++i) {
+            var line = lines[i];
+            int numline = line.getnum();
+            string str = line.str;
+            handle.print(numline);
+            handle.print(' ');
+            handle.print(str);
+            handle.print("\n");
+        }
+    }
+    function deletelines(int l_from, int l_to)
+    {
+        var lines = self.lines;
+        int nlines = lines;
+        int i_from = self.findlinepos(l_from);
+        int i_to;
+        if (l_to == -1)
+            i_to = nlines;
+        else {
+            i_to  = self.findlinepos(l_to);
+            if (i_to < nlines)
+                if (lines[i_to].getnum() <= l_to)
+                    ++i_to;
+        }
+        int range = i_to - i_from;
+        if (range <= 0)
+            return;
+        int n = lines;
+        int move = n - i_to;
+        for (int i = 0; i < move; ++i)
+            lines[i_from + i] = lines[i_to + i];
+        lines =: n - range;
+    }
+    function load(string progname)
+    {
+        var handle;
+        try {
+            handle = new 'FileHandle'.open(progname);
+            handle.encoding('utf8');
+            var fileline;
+            while ((fileline = handle.readline())) {
+                fileline = chomp(fileline);
+                var line = parseline(fileline);
+                int n = line.getnum();
+                if (n == DIRECT)
+                    throw Error('Direct command found');
+                self.insert(line);
+            }
+        }
+        catch() {
+            if (handle != null)
+                handle.close();
+            return 1;
+        }
+        handle.close();
+        return 0;
+    }
+    function save(string progname)
+    {
+        var handle = new 'FileHandle'.open(progname, 'w');
+        handle.encoding('utf8');
+        self.list(handle);
+        handle.close();
+    }
+}
+
+//**********************************************************************
+
+class Control
+{
+    var nline;
+    var chunk;
+    function init(int numline, int chunk)
+    {
+        self.nline = numline;
+        self.chunk = chunk;
+        return self;
+    }
+}
+
+class GosubControl : Control
+{
+}
+
+class ForControl : Control
+{
+    var varname;
+    var finalval;
+    var stepval;
+}
+
+class WhileControl : Control
+{
+    var line;
+    var chunk;
+}
+
+//**********************************************************************
+
+class Runner
+{
+    var program;
+    var runstate;
+    var curline;
+    var curchunk;
+    var directline;
+    var tron;
+    var retstack;
+    var forstack;
+    var whilestack;
+    var repeatstack;
+    var errorline;
+    var errorcode;
+    var stopped;
+    var variables;
+    var stdin;
+    var stdout;
+    var channels;
+
+    function init[vtable]()
+    {
+        self.clearall();
+        self.runstate = RUNstart;
+        self.curline = 0;
+        self.curchunk = 0;
+        self.tron = 0;
+        var handle = getinterp().stdhandle(0);
+        handle.encoding('utf8');
+        self.stdin = handle;
+        handle = getinterp().stdhandle(1);
+        handle.encoding('utf8');
+        self.stdout = handle;
+    }
+    function clearall()
+    {
+        self.closeall();
+        self.retstack = [];
+        self.forstack = [];
+        self.whilestack = [];
+        self.repeatstack = [];
+        self.variables = {};
+    }
+    function getstdin()
+    {
+        return self.stdin;
+    }
+    function getstdout()
+    {
+        return self.stdout;
+    }
+    function open(int chnum, var handle)
+    {
+        var channels = self.channels;
+        var old = channels[chnum];
+        if (old != null)
+            old.close();
+        channels[chnum] = handle;
+    }
+    function close(int chnum)
+    {
+        var channels = self.channels;
+        var old = channels[chnum];
+        if (old != null) {
+            old.close();
+            channels[chnum] = null;
+        }
+    }
+    function closeall()
+    {
+        var channels = self.channels;
+        if (channels != null) {
+            for (var chnum in channels) {
+                var old = channels[chnum];
+                old.close();
+                channels[chnum] = null;
+            }
+        }
+        self.channels = {};
+    }
+    function getchannel(int chnum)
+    {
+        var channels = self.channels;
+        var old = channels[chnum];
+        return old;
+    }
+    function new()
+    {
+        self.program = new Program();
+    }
+    function load(string progname, line, int chunk)
+    {
+        var program = new Program();
+        if (program.load(progname)) {
+            self.seterror(line, chunk, ERR_load);
+            return 1;
+        }
+        else {
+            self.program = program;
+            return 0;
+        }
+    }
+    function save(string progname)
+    {
+        self.program.save(progname);
+    }
+    function list(handle)
+    {
+        self.program.list(handle);
+    }
+    function listlines(handle, int l_from, int l_to)
+    {
+        self.program.listlines(handle, l_from, l_to);
+    }
+    function deletelines(int l_from, int l_to)
+    {
+        self.program.deletelines(l_from, l_to);
+    }
+    function setvar(string varname, value)
+    {
+        var variables = self.variables;
+        variables[varname] = value;
+        return 0;
+    }
+    function getvar(string varname)
+    {
+        var variables = self.variables;
+        return variables[varname];
+    }
+    function seterror(line, int chunk, int code)
+    {
+        self.errorline = line;
+        self.errorcode = code;
+        self.runstate = RUNerror;
+    }
+    function runcode()
+    {
+        var lines = self.program.lines;
+        var line;
+        int n = lines;
+        int l;
+        for (;;) {
+            l = self.curline;
+            if (l >= n) {
+                self.runstate = RUNend;
+                break;
+            }
+            if (l == DIRECT)
+                line = self.directline;
+            else
+                line = lines[l];
+            if (self.tron != 0) {
+                if (l != DIRECT) {
+                    int numline = line.getnum();
+                    print('[', numline, ']');
+                }
+            }
+
+            var chunks = line.getchunks();
+            var chunk;
+            int nc = chunks;
+            for (int i = self.curchunk; i < nc; ++i) {
+                chunk = chunks[i];
+                if (chunk.execute(self, line, i)) {
+                    if (self.runstate == RUNgoto) {
+                        if (l == self.curline) {
+                            i = self.curchunk;
+                            if (i < nc) {
+                                --i;
+                                self.runstate = RUNrunning;
+                                continue;
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+
+            if (self.runstate != RUNrunning)
+                break;
+            if (l == DIRECT) {
+                self.runstate = RUNinteract;
+                break;
+            }
+            ++l;
+            self.curline = l;
+            self.curchunk = 0;
+        }
+    }
+    function interact()
+    {
+        var in = self.getstdin();
+        var str;
+        str = in.readline_interactive();
+        var line = parseline(str);
+        int n = line.getnum();
+        int empty = line.isempty();
+        if (n != DIRECT) {
+            if (empty)
+                self.program.delete(n);
+            else
+                self.program.insert(line);
+        }
+        else {
+            self.curline = DIRECT;
+            self.curchunk = 0;
+            self.directline = line;
+            self.runstate = RUNrunning;
+        }
+    }
+    function mainloop()
+    {
+        int n;
+        int i;
+        var lines;
+        while (self.runstate != RUNexit) {
+            //say('mainloop');
+            switch (self.runstate) {
+            case RUNstart:
+                say('Ready');
+                self.runstate = RUNinteract;
+                break;
+            case RUNrun:
+                i = self.curline;
+                lines = self.program.lines;
+                n = lines;
+                if (i < n)
+                    self.runstate = RUNrunning;
+                else
+                    self.runstate = RUNend;
+                break;
+            case RUNend:
+                self.runstate = RUNstart;
+                break;
+            case RUNinteract:
+                self.interact();
+                break;
+            case RUNrunning:
+                self.runcode();
+                break;
+            case RUNgoto:
+                i = self.curline;
+                lines = self.program.lines;
+                n = lines;
+                if (i < n)
+                    self.runstate = RUNrunning;
+                else
+                    self.runstate = RUNend;
+                break;
+            case RUNerror:
+                int errlinenum = self.errorline.getnum();
+                print('Error');
+                if (errlinenum != DIRECT)
+                    print(' in ', errlinenum);
+                print(': ', errmsg(self.errorcode));
+                say();
+                self.runstate = RUNinteract;
+                break;
+            }
+        }
+    }
+    function runstart()
+    {
+        self.curline = 0;
+        self.curchunk = 0;
+        self.runstate = RUNrun;
+    }
+    function gotolinepos(var line, int chunk)
+    {
+        int linenum = line.getnum();
+        if (linenum != DIRECT)
+            linenum = self.program.findline(linenum);
+        self.curline = linenum;
+        self.curchunk = chunk;
+        self.runstate = RUNgoto;
+    }
+    function gotopos(int lineindex, int chunk)
+    {
+        self.curline = lineindex;
+        self.curchunk = chunk;
+        self.runstate = RUNgoto;
+    }
+    function gotonumpos(int linenum, int chunk)
+    {
+        if (linenum != DIRECT)
+            linenum = self.program.findline(linenum);
+        self.curline = linenum;
+        self.curchunk = chunk;
+        self.runstate = RUNgoto;
+    }
+    function dostop(var line, int chunk)
+    {
+        int numline = line.getnum();
+        if (numline == DIRECT)
+            self.stopped = null;
+        else
+            self.stopped = new Control().init(numline, chunk);
+        self.seterror(line, chunk, ERR_stop);
+    }
+    function docont(line, chunk)
+    {
+        var stopped = self.stopped;
+        if (stopped == null)
+            self.seterror(line, chunk, ERR_cant_cont);
+        self.stopped = null;
+        self.gotonumpos(stopped.nline, stopped.chunk + 1);
+    }
+    function pushret(line, int chunk)
+    {
+        int numline = line.getnum();
+        if (numline != DIRECT) {
+            int n = line.chunks;
+            if (++chunk >= n) {
+                ++numline;
+                chunk = 0;
+            }
+        }
+        else
+            ++chunk;
+        var control = new GosubControl().init(numline, chunk);
+        self.retstack.push(control);
+    }
+    function doreturn()
+    {
+        var stack = self.retstack;
+        int n = stack;
+        if (n > 0) {
+            var control = stack.pop();
+            n = control.nline;
+            int chunk = control.chunk;
+            if (n == DIRECT) {
+                var dirline = self.directline;
+                int nch = dirline.chunks;
+                if (chunk < nch) {
+                    self.gotopos(DIRECT, chunk);
+                }
+                else
+                    self.runstate = RUNend;
+            }
+            else
+                self.gotonumpos(n, chunk);
+            return 0;
+        }
+        else
+            return 1;
+    }
+    function dofor(line, int chunk, string varname, initial, final, step)
+    {
+        self.setvar(varname, initial);
+        int linenum = line.getnum();
+        ++chunk;
+        if (linenum != DIRECT) {
+            linenum = self.program.findline(linenum);
+            int nchunk = line.chunks;
+            if (chunk < nchunk) {
+                ++linenum;
+                chunk = 0;
+            }
+        }
+        int donext;
+        if (step > 0)
+            donext = initial <= final;
+        else
+            donext = initial >= final;
+        if (donext) {
+            var forcontrol = new ForControl().init(linenum, chunk);
+            forcontrol.varname = varname;
+            forcontrol.finalval = final;
+            forcontrol.stepval = step;
+            self.forstack.push(forcontrol);
+            return 0;
+        }
+        else {
+            var program = self.program;
+            var proglines = program.lines;
+            int nlines = proglines;
+            int count = 1;
+            var curline = line;
+            int curch = chunk + 1;
+        nextcheck:
+            var chunks = curline.getchunks();
+            int nchunks = chunks;
+            for (; curch < nchunks; ++curch) {
+                var ch = chunks[curch];
+                if (ch instanceof ChunkFOR)
+                    ++count;
+                else if (ch instanceof ChunkNEXT) {
+                    --count;
+                    if (count == 0)
+                        break;
+                }
+            }
+            if (count > 0) {
+                curline = program.nextline(curline);
+                if (curline != null) {
+                    curch = 0;
+                    goto nextcheck;
+                }
+                self.seterror(line, chunk, ERR_without_next);
+            }
+            else
+                self.gotolinepos(curline, curch + 1);
+            return 1;
+        }
+    }
+    function donext(line, int chunk, string nextname[optional])
+    {
+        var stack = self.forstack;
+        int n = stack;
+        if (n < 1) {
+            self.seterror(line, chunk, ERR_without_for);
+            return 1;
+        }
+        var forcontrol = stack[n-1];
+        string varname = forcontrol.varname;
+        if (nextname != null)
+            if (varname != nextname) {
+                self.seterror(line, chunk, ERR_without_for);
+                return 1;
+            }
+        var value = self.getvar(varname);
+        var step = forcontrol.stepval;
+        value = value + step;
+        self.setvar(varname, value);
+        var final = forcontrol.finalval;
+        int doit;
+        if (step > 0)
+            doit = value <= final;
+        else
+            doit = value >= final;
+        if (doit) {
+            int nline = forcontrol.nline;
+            int chunk = forcontrol.chunk;
+            self.gotopos(nline, chunk);
+            return 1;
+        }
+        stack.pop();
+        return 0;
+    }
+    function dowhile(line, int chunk)
+    {
+        int linenum = line.getnum();
+        if (linenum != DIRECT)
+            linenum = self.program.findline(linenum);
+        var control = new WhileControl().init(linenum, chunk);
+        control.line = line;
+        control.chunk = chunk;
+        self.whilestack.push(control);
+    }
+    function dowend(line, int chunk)
+    {
+        var stack = self.whilestack;
+        int n = stack;
+        if (n < 1) {
+            self.seterror(line, chunk, ERR_without_while);
+            return 1;
+        }
+        var control = stack[n-1];
+        var linewhile = control.line;
+        var chunknumwhile = control.chunk;
+        var chunks = linewhile.chunks;
+        var chunkwhile = chunks[chunknumwhile];
+        var condition = chunkwhile.condition;
+        var value = condition.eval(self);
+        int v = value;
+        if (value) {
+            int nline = control.nline;
+            int chunk = control.chunk;
+            self.gotopos(nline, chunk);
+            return 1;
+        }
+        else {
+            stack.pop();
+            return 0;
+        }
+    }
+    function dorepeat(line, int chunk)
+    {
+        int linenum = line.getnum();
+        if (linenum != DIRECT)
+            linenum = self.program.findline(linenum);
+        var control = new Control().init(linenum, chunk + 1);
+        self.repeatstack.push(control);
+    }
+    function dountil(line, int chunk, int value)
+    {
+        var stack = self.repeatstack;
+        int n = stack;
+        if (n == 0) {
+            self.seterror(line, chunk, ERR_without_while);
+            return 1;
+        }
+        if (value) {
+            stack.pop();
+            return 0;
+        }
+        else {
+            var control = stack[n-1];
+            self.gotopos(control.nline, control.chunk);
+            return 1;
+        }
+    }
+}
+
+//**********************************************************************
+
+function main(argv)
+{
+    using extern Getopt.Obj;
+    var getopts = new Getopt.Obj();
+    getopts.notOptStop(1);
+    getopts.push_string('t');
+    getopts.push_string('l');
+    argv.shift();
+    var opts = getopts.get_options(argv);
+    var opt_t = opts['t'];
+    var opt_l = opts['l'];
+
+    var runner = new Runner();
+    if (opt_t != null)
+        runner.tron = 1;
+    int argc = argv;
+    if (argc > 0) {
+        if (runner.load(argv[0], null, 0)) {
+            die("Cannot load program");
+        }
+        if (opt_l == null)
+            runner.runstart();
+        runner.mainloop();
+    }
+    else {
+        runner.new();
+        runner.mainloop();
+    }
+}
+
+// End of wasix
