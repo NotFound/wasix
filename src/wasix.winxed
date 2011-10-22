@@ -1,7 +1,7 @@
 #! winxed
 
 // wasix: a simple old style Basic interpreter
-// Revision 24-jun-2010
+// Revision 22-oct-2011
 
 /*
 
@@ -182,7 +182,7 @@ function parseline(string str)
         linecontent = str;
         numline = DIRECT;
     }
-    return new ProgramLine().init(numline, linecontent);
+    return new ProgramLine(numline, linecontent);
 }
 
 //**********************************************************************
@@ -191,7 +191,7 @@ class Token
 {
     var t;
     var str;
-    function init(int type, var str)
+    function Token(int type, var str)
     {
         self.t = type;
         self.str = str;
@@ -261,7 +261,7 @@ function parsechunks(string str)
                 t+= c;
                 ++i;
             }
-            tok = new Token().init(IDENTIFIER, t);
+            tok = new Token(IDENTIFIER, t);
         }
         else if (isdigit(c) || c == '.') {
             int isfloat = 0;
@@ -287,22 +287,22 @@ function parsechunks(string str)
             }
             if (isfloat) {
                 if (t == '.')
-                    tok = new Token().init(OP, t);
+                    tok = new Token(OP, t);
                 else {
                     float fval = t;
-                    tok = new Token().init(FLOAT, fval);
+                    tok = new Token(FLOAT, fval);
                 }
             }
             else {
                 int ival = t;
-                tok = new Token().init(INTEGER, ival);
+                tok = new Token(INTEGER, ival);
             }
         }
         else if (c == '"') {
             for (++i; i < n && (c = substr(str, i, 1)) != '"'; ++i)
                 t += c;
             ++i;
-            tok = new Token().init(STRING, t);
+            tok = new Token(STRING, t);
         }
         else {
             t = c;
@@ -317,7 +317,7 @@ function parsechunks(string str)
                     ++i;
                 }
             }
-            tok = new Token().init(OP, t);
+            tok = new Token(OP, t);
         }
         tokens.push(tok);
     }
@@ -328,22 +328,22 @@ function parsechunks(string str)
         var token = tokens[i];
         if (token.isop(':') || token.isidentifier("THEN")) {
             if (int(items) > 0)
-                chunks.push(new Chunk().init(items));
+                chunks.push(createChunk(items));
             items = [];
         }
         else if (token.isidentifier("ELSE")) {
             if (int(items) > 0)
-                chunks.push(new Chunk().init(items));
+                chunks.push(createChunk(items));
             items = [];
             items.push(token);
-                chunks.push(new Chunk().init(items));
+                chunks.push(createChunk(items));
             items = [];
         }
         else
             items.push(token);
     }
     if (int(items) > 0)
-        chunks.push(new Chunk().init(items));
+        chunks.push(createChunk(items));
     return chunks;
 }
 
@@ -354,7 +354,7 @@ class Matrix
     var numdims;
     var dims;
     var values;
-    function init(runner, initdims)
+    function Matrix(runner, initdims)
     {
         int n = initdims;
         int dims[n];
@@ -429,7 +429,7 @@ class ExprSyntaxError
 class ExprInteger
 {
     var n;
-    function set(item)
+    function ExprInteger(item)
     {
         int n = item.getint();
         self.n = n;
@@ -459,7 +459,7 @@ class ExprFloat
 class ExprString
 {
     var s;
-    function set(item)
+    function ExprString(item)
     {
         string s = item.get();
         self.s = s;
@@ -474,7 +474,7 @@ class ExprString
 class ExprIdentifier
 {
     var name;
-    function set(string name)
+    function ExprIdentifier(string name)
     {
         self.name = name;
         return self;
@@ -489,7 +489,7 @@ class ExprIndexed
 {
     var name;
     var indexes;
-    function parse(string name, items)
+    function ExprIndexed(string name, items)
     {
         self.name = name;
         if (int(items) < 1)
@@ -586,7 +586,7 @@ class ExprNEW : ExprPredefFunction
     function eval(runner)
     {
         string clname = self.cl.eval(runner);
-        var obj = new clname();
+        var obj = new clname;
         return obj;
     }
 }
@@ -959,7 +959,7 @@ class MethodExpr
     var subexpr;
     var methodname;
     var args;
-    function init(subexpr, method, items)
+    function MethodExpr(subexpr, method, items)
     {
         //say('MethodExpr.init');
         self.subexpr = subexpr;
@@ -1012,33 +1012,33 @@ function checkFunction(string name, items)
     var expr;
     switch(name) {
     case 'ASC':
-        expr = new ExprASC(); break;
+        expr = new ExprASC; break;
     case 'CHR$':
-        expr = new ExprCHR(); break;
+        expr = new ExprCHR; break;
     case 'INSTR':
-        expr = new ExprINSTR(); break;
+        expr = new ExprINSTR; break;
     case 'LEFT$':
-        expr = new ExprLEFT(); break;
+        expr = new ExprLEFT; break;
     case 'LEN':
-        expr = new ExprLEN(); break;
+        expr = new ExprLEN; break;
     case 'MID$':
-        expr = new ExprMID(); break;
+        expr = new ExprMID; break;
     case 'NEW':
-        expr = new ExprNEW(); break;
+        expr = new ExprNEW; break;
     case 'RIGHT$':
-        expr = new ExprRIGHT(); break;
+        expr = new ExprRIGHT; break;
     case 'STRING$':
-        expr = new ExprSTRING(); break;
+        expr = new ExprSTRING; break;
     case 'SQR':
-        expr = new ExprSQR(); break;
+        expr = new ExprSQR; break;
     case 'SIN':
-        expr = new ExprSIN(); break;
+        expr = new ExprSIN; break;
     case 'COS':
-        expr = new ExprCOS(); break;
+        expr = new ExprCOS; break;
     case 'TAN':
-        expr = new ExprTAN(); break;
+        expr = new ExprTAN; break;
     case 'ATN':
-        expr = new ExprATN(); break;
+        expr = new ExprATN; break;
     default:
         return null;
     }
@@ -1055,9 +1055,9 @@ function parseIdentifier(itname, items)
     else {
         if (int(items) > 0) {
             if (items[0].isop('('))
-                return new ExprIndexed().parse(name, items);
+                return new ExprIndexed(name, items);
         }
-        return new ExprIdentifier().set(name);
+        return new ExprIdentifier(name);
     }
 }
 
@@ -1071,13 +1071,13 @@ function parseExpr_base(items)
     var subexpr;
     switch(item.type()) {
     case INTEGER:
-        subexpr = new ExprInteger().set(item);
+        subexpr = new ExprInteger(item);
         break;
     case FLOAT:
         subexpr = new ExprFloat().set(item);
         break;
     case STRING:
-        subexpr = new ExprString().set(item);
+        subexpr = new ExprString(item);
         break;
     case IDENTIFIER:
         subexpr = parseIdentifier(item, items);
@@ -1114,7 +1114,7 @@ function parseExpr_member(items)
             if (n > 2) {
                 var t = items[0];
                 if (t.isop('('))
-                    return new MethodExpr().init(subexpr, item, items);
+                    return new MethodExpr(subexpr, item, items);
             }
             subexpr = new MemberExpr().init(subexpr, item);
         }
@@ -1153,9 +1153,9 @@ more:
             var rexpr = parseExpr_unary(items);
             var aux;
             if (item.isop('*'))
-                aux = new ExprMul();
+                aux = new ExprMul;
             else
-                aux = new ExprDiv();
+                aux = new ExprDiv;
             aux.init(lexpr, rexpr);
             lexpr = aux;
             goto more;
@@ -1178,9 +1178,9 @@ more:
             var rexpr = parseExpr_mul(items);
             var aux;
             if (item.isop('+'))
-                aux = new ExprAdd();
+                aux = new ExprAdd;
             else
-                aux = new ExprSub();
+                aux = new ExprSub;
             aux = aux.init(lexpr, rexpr);
             lexpr = aux;
             goto more;
@@ -1205,17 +1205,17 @@ more:
             var rexpr = parseExpr_add(items);
             var aux;
             if (item.isop('='))
-                aux = new ExprEqual();
+                aux = new ExprEqual;
             else if (item.isop('<>'))
-                aux = new ExprNotEqual();
+                aux = new ExprNotEqual;
             else if (item.isop('<'))
-                aux = new ExprLess();
+                aux = new ExprLess;
             else if (item.isop('>'))
-                aux = new ExprGreater();
+                aux = new ExprGreater;
             else if (item.isop('<='))
-                aux = new ExprLessEqual();
+                aux = new ExprLessEqual;
             else if (item.isop('>='))
-                aux = new ExprGreaterEqual();
+                aux = new ExprGreaterEqual;
             aux.init(lexpr, rexpr);
             lexpr = aux;
             goto more;
@@ -1251,12 +1251,11 @@ function nomoreitems(chunk, items)
 
 class ChunkComment
 {
-    function init(var items)
+    function ChunkComment(var items)
     {
         int n;
         while ((n = items) > 0)
             items.shift();
-        return self;
     }
     function execute(runner, line, int chunk)
     {
@@ -1300,7 +1299,7 @@ class ChunkWithRange
 {
     var l_from;
     var l_to;
-    function parse(items)
+    function ChunkWithRange(items)
     {
         int n = items;
         if (n == 0)
@@ -1330,7 +1329,6 @@ class ChunkWithRange
         }
         self.l_from = linefrom;
         self.l_to = lineto;
-        return self;
     }
 }
 
@@ -1369,6 +1367,7 @@ class ChunkCLEAR : ChunkNoArgs
 
 class ChunkRUN : ChunkNoArgs
 {
+    function ChunkRUN(var items) { }
     function execute(runner, line, int chunk)
     {
         runner.clearall();
@@ -1456,17 +1455,14 @@ class ChunkLIST
     function execute(runner, line, int chunk)
     {
         runner.list(runner.getstdout());
-        return 1;
     }
 }
 
 class ChunkLISTargs : ChunkWithRange
 {
-    function init(l_from, l_to)
+    function ChunkLISTargs(var items)
     {
-        self.l_from = l_from;
-        self.l_to = l_to;
-        return self;
+        self.ChunkWithRange(items);
     }
     function execute(runner, line, int chunk)
     {
@@ -1479,9 +1475,9 @@ function parseLIST(items)
 {
     int n = items;
     if (n == 0)
-        return new ChunkLIST();
+        return new ChunkLIST;
     else
-        return new ChunkLISTargs().parse(items);
+        return new ChunkLISTargs(items);
 }
 
 class ChunkLOAD
@@ -1570,6 +1566,7 @@ class ChunkSAVE
 
 class ChunkEXIT : ChunkNoArgs
 {
+    function ChunkEXIT(var items) { }
     function execute(runner, line, int chunk)
     {
         runner.runstate = RUNexit;
@@ -1581,11 +1578,10 @@ class ChunkLET
 {
     var varname;
     var value;
-    function init(string strname, var items)
+    function ChunkLET(string strname, var items)
     {
         self.varname = strname;
         self.value = parseExpr(items);
-        return self;
     }
     function execute(runner, line, int chunk)
     {
@@ -1604,7 +1600,7 @@ class ChunkLETindexed
     var varname;
     var indexes;
     var value;
-    function init(string strname, var items)
+    function ChunkLETindexed(string strname, var items)
     {
         self.varname = strname;
         int n;
@@ -1620,7 +1616,6 @@ class ChunkLETindexed
         if (!aux.isop('='))
             return new ChunkBad();
         self.value = parseExpr(items);
-        return self;
     }
     function execute(runner, line, int chunk)
     {
@@ -1645,9 +1640,9 @@ function parseLETname(var name, var items)
         return new ChunkBad();
     var t = items.shift();
     if (t.isop('='))
-        return new ChunkLET().init(strname, items);
+        return new ChunkLET(strname, items);
     if (t.isop('('))
-        return new ChunkLETindexed().init(strname, items);
+        return new ChunkLETindexed(strname, items);
     return new ChunkBad();
 }
 
@@ -1667,7 +1662,7 @@ class ChunkDIM
 {
     var varname;
     var dims;
-    function init(var items)
+    function ChunkDIM(var items)
     {
         int n = items;
         if (n < 2)
@@ -1686,12 +1681,11 @@ class ChunkDIM
         if (dims == null)
             return new ChunkBad();
         self.dims = dims;
-        return self;
     }
     function execute(runner, line, int chunk)
     {
         var dims = self.dims;
-        var m = new Matrix().init(runner, dims);
+        var m = new Matrix(runner, dims);
         return runner.setvar(self.varname, m);
     }
 }
@@ -1740,7 +1734,7 @@ class ChunkFOR
     var initexpr;
     var finalexpr;
     var stepexpr;
-    function init(var items)
+    function ChunkFOR(var items)
     {
         int n = items;
         if (n < 2)
@@ -1765,7 +1759,6 @@ class ChunkFOR
                 return new ChunkBad();
             self.stepexpr = parseExpr(items);
         }
-        return self;
     }
     function execute(runner, line, int chunk)
     {
@@ -1806,15 +1799,15 @@ function parseNEXT(var items)
 {
     int n = items;
     if (n == 0)
-        return new ChunkNEXT();
+        return new ChunkNEXT;
     else {
         var name = items.shift();
         if (name.type() != IDENTIFIER)
             return new ChunkBad();
         n = items;
         if (n != 0)
-            return new ChunkNEXT();
-        var chunk = new ChunkNEXTvar();
+            return new ChunkNEXT;
+        var chunk = new ChunkNEXTvar;
         chunk.varname = name.checkidentifier();
         return chunk;
     }
@@ -1884,6 +1877,10 @@ class ChunkREPEAT : ChunkNoArgs
 
 class ChunkUNTIL : ChunkWithCondition
 {
+    function ChunkUNTIL(var items)
+    {
+        self.init(items);
+    }
     function execute(runner, line, int chunk)
     {
         var value = self.condition.eval(runner);
@@ -1896,7 +1893,7 @@ class ChunkPRINT
 {
     var channel;
     var printitems;
-    function init(var items)
+    function ChunkPRINT(var items)
     {
         self.printitems = [];
         var item;
@@ -1925,7 +1922,6 @@ class ChunkPRINT
                 printitem = parseExpr(items);
             self.printitems.push(printitem);
         }
-        return self;
     }
     function execute(runner, line, int chunk)
     {
@@ -1969,7 +1965,7 @@ class ChunkLINE_INPUT
 {
     var channel;
     var varname;
-    function init(var items)
+    function ChunkLINE_INPUT(var items)
     {
         int n = items;
         if (n < 1)
@@ -1989,7 +1985,6 @@ class ChunkLINE_INPUT
         if (varname == '')
             return new ChunkBad();
         self.varname = varname;
-        return self;
     }
     function execute(runner, line, int chunk)
     {
@@ -2016,18 +2011,15 @@ class ChunkLINE_INPUT
     }
 }
 
-class ChunkLINE
+function createChunkLINE(var items)
 {
-    function init(var items)
-    {
-        int n = items;
-        if (n < 1)
-            return new ChunkBad();
-        var item = items.shift();
-        if (!item.isidentifier('INPUT'))
-            return new ChunkBad();
-        return new ChunkLINE_INPUT().init(items);
-    }
+    int n = items;
+    if (n < 1)
+        return new ChunkBad();
+    var item = items.shift();
+    if (!item.isidentifier('INPUT'))
+        return new ChunkBad();
+    return new ChunkLINE_INPUT(items);
 }
 
 class ChunkOPEN
@@ -2035,7 +2027,7 @@ class ChunkOPEN
     var filenameexpr;
     var channelexpr;
     var mode;
-    function init(var items)
+    function ChunkOPEN(var items)
     {
         self.filenameexpr = parseExpr(items);
         int n = items;
@@ -2069,7 +2061,6 @@ class ChunkOPEN
             mode = OPEN_input;
         mode = mode | flags;
         self.mode = mode;
-        return self;
     }
     function execute(runner, line, int chunk)
     {
@@ -2103,7 +2094,7 @@ class ChunkOPEN
 class ChunkCLOSE
 {
     var channelexpr;
-    function init(var items)
+    function ChunkCLOSE(var items)
     {
         int n = items;
         if (n > 0) {
@@ -2111,7 +2102,6 @@ class ChunkCLOSE
                 items.shift();
             self.channelexpr = parseExpr(items);
         }
-        return self;
     }
     function execute(runner, line, int chunk)
     {
@@ -2147,6 +2137,10 @@ class ChunkTROFF : ChunkNoArgs
 
 class ChunkDELETE : ChunkWithRange
 {
+    function ChunkDELETE(var items)
+    {
+        self.ChunkWithRange(items);
+    }
     function execute(runner, line, int chunk)
     {
         runner.deletelines(self.l_from, self.l_to);
@@ -2177,90 +2171,87 @@ class ChunkERROR
 
 //**********************************************************************
 
-class Chunk
+function createChunk(var items)
 {
-    function init(var items)
-    {
-        int n = items;
-        var item = items.shift();
-        string str = item.checkidentifier();
-        switch(str) {
-        case 'REM':
-            return new ChunkComment().init(items);
-        case 'NEW':
-            return new ChunkNEW().init(items);
-        case 'CLEAR':
-            return new ChunkCLEAR().init(items);
-        case 'RUN':
-            return new ChunkRUN().init(items);
-        case 'END':
-            return new ChunkEND().init(items);
-        case 'STOP':
-            return new ChunkSTOP().init(items);
-        case 'CONT':
-            return new ChunkCONT().init(items);
-        case 'GOTO':
-            return new ChunkGOTO().init(items);
-        case 'GOSUB':
-            return new ChunkGOSUB().init(items);
-        case 'RETURN':
-            return new ChunkRETURN().init(items);
-        case 'LIST':
-            return parseLIST(items);
-        case 'LOAD':
-            return new ChunkLOAD().init(items);
-        case 'CHAIN':
-            return parseCHAIN(items);
-        case 'SAVE':
-            return new ChunkSAVE().init(items);
-        case 'EXIT':
-            return new ChunkEXIT().init(items);
-        case 'LET':
-            return parseLET(items);
-        case 'DIM':
-            return new ChunkDIM().init(items);
-        case 'IF':
-            return new ChunkIF().init(items);
-        case 'ELSE':
-            return new ChunkELSE().init(items);
-        case 'FOR':
-            return new ChunkFOR().init(items);
-        case 'NEXT':
-            return parseNEXT(items);
-        case 'WHILE':
-            return new ChunkWHILE().init(items);
-        case 'WEND':
-            return new ChunkWEND().init(items);
-        case 'REPEAT':
-            return new ChunkREPEAT().init(items);
-        case 'UNTIL':
-            return new ChunkUNTIL().init(items);
-        case 'PRINT':
-            return new ChunkPRINT().init(items);
-        case 'LINE':
-            return new ChunkLINE().init(items);
-        case 'OPEN':
-            return new ChunkOPEN().init(items);
-        case 'CLOSE':
-            return new ChunkCLOSE().init(items);
-        case 'TRON':
-            return new ChunkTRON().init(items);
-        case 'TROFF':
-            return new ChunkTROFF().init(items);
-        case 'DELETE':
-            return new ChunkDELETE().parse(items);
-        case 'ERROR':
-            return new ChunkERROR().parse(items);
-        default:
-            if (item.type() == IDENTIFIER)
-                return parseLETname(item, items);
-            if (item.isop('?'))
-                return new ChunkPRINT().init(items);
-            if (item.isop("'"))
-                return new ChunkComment().init(items);
-        }
-        return new ChunkBad();
+    int n = items;
+    var item = items.shift();
+    string str = item.checkidentifier();
+    switch(str) {
+    case 'REM':
+        return new ChunkComment(items);
+    case 'NEW':
+        return new ChunkNEW().init(items);
+    case 'CLEAR':
+        return new ChunkCLEAR().init(items);
+    case 'RUN':
+        return new ChunkRUN(items);
+    case 'END':
+        return new ChunkEND;
+    case 'STOP':
+        return new ChunkSTOP().init(items);
+    case 'CONT':
+        return new ChunkCONT().init(items);
+    case 'GOTO':
+        return (new ChunkGOTO).init(items);
+    case 'GOSUB':
+        return (new ChunkGOSUB).init(items);
+    case 'RETURN':
+        return new ChunkRETURN;
+    case 'LIST':
+        return parseLIST(items);
+    case 'LOAD':
+        return new ChunkLOAD().init(items);
+    case 'CHAIN':
+        return parseCHAIN(items);
+    case 'SAVE':
+        return new ChunkSAVE().init(items);
+    case 'EXIT':
+        return new ChunkEXIT(items);
+    case 'LET':
+        return parseLET(items);
+    case 'DIM':
+        return new ChunkDIM(items);
+    case 'IF':
+        return (new ChunkIF).init(items);
+    case 'ELSE':
+        return new ChunkELSE;
+    case 'FOR':
+        return new ChunkFOR(items);
+    case 'NEXT':
+        return parseNEXT(items);
+    case 'WHILE':
+        return (new ChunkWHILE).init(items);
+    case 'WEND':
+        return (new ChunkWEND).init(items);
+    case 'REPEAT':
+        return new ChunkREPEAT;
+    case 'UNTIL':
+        return new ChunkUNTIL(items);
+    case 'PRINT':
+        return new ChunkPRINT(items);
+    case 'LINE':
+        return createChunkLINE(items);
+    case 'OPEN':
+        return new ChunkOPEN(items);
+    case 'CLOSE':
+        return new ChunkCLOSE(items);
+    case 'TRON':
+        return new ChunkTRON;
+    case 'TROFF':
+        return new ChunkTROFF;
+    case 'DELETE':
+        return new ChunkDELETE(items);
+    case 'ERROR':
+        return new ChunkERROR().parse(items);
+    default:
+        if (item.type() == IDENTIFIER)
+            return parseLETname(item, items);
+        if (item.isop('?'))
+            return new ChunkPRINT(items);
+        if (item.isop("'"))
+            return new ChunkComment(items);
     }
+    return new ChunkBad();
 }
 
 //**********************************************************************
@@ -2270,7 +2261,7 @@ class ProgramLine
     var numline;
     var str;
     var chunks;
-    function init(int numline, string content)
+    function ProgramLine(int numline, string content)
     {
         self.numline = numline;
         self.str = content;
@@ -2305,7 +2296,7 @@ class Program
 {
     var lines;
 
-    function init[vtable]()
+    function Program()
     {
         self.lines = [];
     }
@@ -2536,17 +2527,17 @@ class Runner
     var stdout;
     var channels;
 
-    function init[vtable]()
+    function Runner()
     {
         self.clearall();
         self.runstate = RUNstart;
         self.curline = 0;
         self.curchunk = 0;
         self.tron = 0;
-        var handle = getinterp().stdhandle(0);
+        var handle = getstdin();
         handle.encoding('utf8');
         self.stdin = handle;
-        handle = getinterp().stdhandle(1);
+        handle = getstdout();
         handle.encoding('utf8');
         self.stdout = handle;
     }
@@ -2812,7 +2803,7 @@ class Runner
         if (numline == DIRECT)
             self.stopped = null;
         else
-            self.stopped = new Control().init(numline, chunk);
+            self.stopped = (new Control).init(numline, chunk);
         self.seterror(line, chunk, ERR_stop);
     }
     function docont(line, chunk)
@@ -2835,7 +2826,7 @@ class Runner
         }
         else
             ++chunk;
-        var control = new GosubControl().init(numline, chunk);
+        var control = (new GosubControl).init(numline, chunk);
         self.retstack.push(control);
     }
     function doreturn()
@@ -2881,7 +2872,7 @@ class Runner
         else
             donext = initial >= final;
         if (donext) {
-            var forcontrol = new ForControl().init(linenum, chunk);
+            var forcontrol = (new ForControl).init(linenum, chunk);
             forcontrol.varname = varname;
             forcontrol.finalval = final;
             forcontrol.stepval = step;
@@ -2960,7 +2951,7 @@ class Runner
         int linenum = line.getnum();
         if (linenum != DIRECT)
             linenum = self.program.findline(linenum);
-        var control = new WhileControl().init(linenum, chunk);
+        var control = (new WhileControl).init(linenum, chunk);
         control.line = line;
         control.chunk = chunk;
         self.whilestack.push(control);
@@ -2997,7 +2988,7 @@ class Runner
         int linenum = line.getnum();
         if (linenum != DIRECT)
             linenum = self.program.findline(linenum);
-        var control = new Control().init(linenum, chunk + 1);
+        var control = (new Control).init(linenum, chunk + 1);
         self.repeatstack.push(control);
     }
     function dountil(line, int chunk, int value)
@@ -3025,7 +3016,7 @@ class Runner
 function main(argv)
 {
     using extern Getopt.Obj;
-    var getopts = new Getopt.Obj();
+    var getopts = new [ "Getopt", "Obj" ];
     getopts.notOptStop(1);
     getopts.push_string('t');
     getopts.push_string('l');
