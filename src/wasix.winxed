@@ -409,7 +409,7 @@ function dimoffset(runner, m, indexes)
         int vind = index;
         int dim = dims[i];
         if (vind > dim)
-            die('return 0');
+            throw 'return 0';
         offset = offset + mult * vind;
         mult = mult * dim;
     }
@@ -3029,7 +3029,7 @@ function main(argv)
     int argc = argv;
     if (argc > 0) {
         if (runner.load(argv[0], null, 0)) {
-            die("Cannot load program");
+            throw "Cannot load program";
         }
         if (opt_l == null)
             runner.runstart();
