@@ -1,7 +1,7 @@
 #! winxed
 
 // wasix: a simple old style Basic interpreter
-// Revision 22-oct-2011
+// Revision 23-oct-2011
 
 /*
 
@@ -493,12 +493,12 @@ class ExprIndexed
     {
         self.name = name;
         if (int(items) < 1)
-            return new ExprSyntaxError();
+            return new ExprSyntaxError;
         if (!(items.shift()).isop('('))
-            return new ExprSyntaxError();
+            return new ExprSyntaxError;
         var indexes = parsedims(items);
         if (indexes == null)
-            return new ExprSyntaxError();
+            return new ExprSyntaxError;
         self.indexes = indexes;
         return self;
     }
@@ -515,16 +515,16 @@ class ExprPredefFunction
     function init(items)
     {
         if (int(items) < 1)
-            return new ExprSyntaxError();
+            return new ExprSyntaxError;
         var item = items.shift();
         if (!item.isop('('))
-            return new ExprSyntaxError();
+            return new ExprSyntaxError;
         self.initfunction(items);
         if (int(items) < 1)
-            return new ExprSyntaxError();
+            return new ExprSyntaxError;
         item = items.shift();
         if (!item.isop(')'))
-            return new ExprSyntaxError();
+            return new ExprSyntaxError;
         return self;
     }
 }
@@ -547,7 +547,7 @@ class ExprPredefArg2 : ExprPredefFunction
     {
         self.arg1 = parseExpr(items);
         if (int(items) < 1 || !(items.shift().isop(',')))
-            return new ExprSyntaxError();
+            return new ExprSyntaxError;
         self.arg2 = parseExpr(items);
         return self;
     }
@@ -562,10 +562,10 @@ class ExprPredefArg2_3 : ExprPredefFunction
     {
         self.arg1 = parseExpr(items);
         if (int(items) < 1 || !(items.shift().isop(',')))
-            return new ExprSyntaxError();
+            return new ExprSyntaxError;
         self.arg2 = parseExpr(items);
         if (int(items) < 1)
-            return new ExprSyntaxError();
+            return new ExprSyntaxError;
         var item = items[0];
         if (item.isop(',')) {
             items.shift();
@@ -961,13 +961,12 @@ class MethodExpr
     var args;
     function MethodExpr(subexpr, method, items)
     {
-        //say('MethodExpr.init');
         self.subexpr = subexpr;
         self.methodname = method.get();
         self.args = [];
         items.shift();
         if (int(items) == 0)
-            return new ExprSyntaxError();
+            return new ExprSyntaxError;
         if (items[0].isop(')'))
             items.shift();
         else {
@@ -975,17 +974,16 @@ class MethodExpr
             var arg;
             do {
                 if (int(items) == 0)
-                    return new ExprSyntaxError();
+                    return new ExprSyntaxError;
                 arg = parseExpr(items);
                 self.args.push(arg);
                 if (int(items) == 0)
-                    return new ExprSyntaxError();
+                    return new ExprSyntaxError;
             } while ((t = items.shift()).isop(','));
             if (! t.isop(')'))
-                return new ExprSyntaxError();
+                return new ExprSyntaxError;
         }
         //say('MethodExpr.init end');
-        return self;
     }
     function eval(runner)
     {
@@ -1063,9 +1061,9 @@ function parseIdentifier(itname, items)
 
 function parseExpr_base(items)
 {
-    int n = items;
+    int n = elements(items);
     if (n == 0)
-        return new ExprSyntaxError();
+        return new ExprSyntaxError;
     var item = items.shift();
     --n;
     var subexpr;
@@ -1087,13 +1085,13 @@ function parseExpr_base(items)
             subexpr = parseExpr(items);
             n = items;
             if (n == 0)
-                return new ExprSyntaxError();
+                return new ExprSyntaxError;
             item = items.shift();
             if (!item.isop(')'))
-                return new ExprSyntaxError();
+                return new ExprSyntaxError;
         }
         else
-            return new ExprSyntaxError();
+            return new ExprSyntaxError;
     }
     return subexpr;
 }
@@ -1101,16 +1099,16 @@ function parseExpr_base(items)
 function parseExpr_member(items)
 {
     var subexpr = parseExpr_base(items);
-    int n = items;
+    int n = elements(items);
     if (n > 0) {
         var item = items[0];
         if (item.isop('.')) {
             if (n < 2)
-                return new ExprSyntaxError();
+                return new ExprSyntaxError;
             items.shift();
             item = items.shift();
             if (item.type() != STRING)
-                return new ExprSyntaxError();
+                return new ExprSyntaxError;
             if (n > 2) {
                 var t = items[0];
                 if (t.isop('('))
@@ -1127,7 +1125,7 @@ function parseExpr_unary(items)
     int n;
     n = items;
     if (n < 1)
-        return new ExprSyntaxError();
+        return new ExprSyntaxError;
     var item = items[0];
     if (item.isop('-')) {
         items.shift();
@@ -1244,7 +1242,7 @@ function nomoreitems(chunk, items)
 {
     int n = items;
     if (n > 0)
-        return new ChunkBad();
+        return new ChunkBad;
     else
         return chunk;
 }
@@ -1270,7 +1268,7 @@ class ChunkNoArgs
     {
         int n = items;
         if (n != 0)
-            return new ChunkBad();
+            return new ChunkBad;
         else
             return self;
     }
@@ -1283,11 +1281,11 @@ class ChunkWithLine
     {
         int n = items;
         if (n != 1)
-            return new ChunkBad();
+            return new ChunkBad;
         else {
             var item = items[0];
             if (item.type() != INTEGER)
-                return new ChunkBad();
+                return new ChunkBad;
             int linenum = item.getint();
             self.linenum = linenum;
             return self;
@@ -1303,13 +1301,13 @@ class ChunkWithRange
     {
         int n = items;
         if (n == 0)
-            return new ChunkBad();
+            return new ChunkBad;
         var item = items.shift();
         int linefrom = -1;
         int lineto = -1;
         if (! item.isop('-')) {
             if (item.type() != INTEGER)
-                return new ChunkBad();
+                return new ChunkBad;
             linefrom = item.getint();
             n = items;
             if (n == 0)
@@ -1317,14 +1315,14 @@ class ChunkWithRange
             else {
                 item = items.shift();
                 if (! item.isop('-'))
-                    return new ChunkBad();
+                    return new ChunkBad;
             }
         }
         n = items;
         if (n != 0) {
             item = items.shift();
             if (item.type() != INTEGER)
-                return new ChunkBad();
+                return new ChunkBad;
             lineto = item.getint();
         }
         self.l_from = linefrom;
@@ -1339,7 +1337,7 @@ class ChunkWithCondition
     {
         int n = items;
         if (n == 0)
-            return new ChunkBad();
+            return new ChunkBad;
         self.condition = parseExpr(items);
         return self;
     }
@@ -1487,7 +1485,7 @@ class ChunkLOAD
     {
         int n = items;
         if (n < 1)
-            return new ChunkBad();
+            return new ChunkBad;
         else {
             self.progname = parseExpr(items);
             return nomoreitems(self, items);
@@ -1514,7 +1512,7 @@ class ChunkCHAIN
     {
         int n = items;
         if (n < 1)
-            return new ChunkBad();
+            return new ChunkBad;
         else {
             self.progname = parseExpr(items);
             return nomoreitems(self, items);
@@ -1546,7 +1544,7 @@ class ChunkSAVE
     {
         int n = items;
         if (n < 1)
-            return new ChunkBad();
+            return new ChunkBad;
         else {
             self.progname = parseExpr(items);
             return self;
@@ -1607,14 +1605,14 @@ class ChunkLETindexed
         var aux;
         var indexes = parsedims(items);
         if (indexes == null)
-            return new ChunkBad();
+            return new ChunkBad;
         self.indexes = indexes;
         n = items;
         if (n < 1)
-            return new ChunkBad();
+            return new ChunkBad;
         aux = items.shift();
         if (!aux.isop('='))
-            return new ChunkBad();
+            return new ChunkBad;
         self.value = parseExpr(items);
     }
     function execute(runner, line, int chunk)
@@ -1637,23 +1635,23 @@ function parseLETname(var name, var items)
     string strname = name.str;
     int n = items;
     if (n == 0)
-        return new ChunkBad();
+        return new ChunkBad;
     var t = items.shift();
     if (t.isop('='))
         return new ChunkLET(strname, items);
     if (t.isop('('))
         return new ChunkLETindexed(strname, items);
-    return new ChunkBad();
+    return new ChunkBad;
 }
 
 function parseLET(var items)
 {
     int n = items;
     if (n < 2)
-        return new ChunkBad();
+        return new ChunkBad;
     var name = items.shift();
     if (name.type() != IDENTIFIER)
-        return new ChunkBad();
+        return new ChunkBad;
     else
         return parseLETname(name, items);
 }
@@ -1666,20 +1664,20 @@ class ChunkDIM
     {
         int n = items;
         if (n < 2)
-            return new ChunkBad();
+            return new ChunkBad;
         var name = items.shift();
         if (name.type() != IDENTIFIER)
-            return new ChunkBad();
+            return new ChunkBad;
         string strname = name.str;
         if (--n == 0)
-            return new ChunkBad();
+            return new ChunkBad;
         self.varname = strname;
         var aux = items.shift();
         if (!aux.isop('('))
-            return new ChunkBad();
+            return new ChunkBad;
         var dims = parsedims(items);
         if (dims == null)
-            return new ChunkBad();
+            return new ChunkBad;
         self.dims = dims;
     }
     function execute(runner, line, int chunk)
@@ -1738,25 +1736,25 @@ class ChunkFOR
     {
         int n = items;
         if (n < 2)
-            return new ChunkBad();
+            return new ChunkBad;
         var varname = items.shift();
         self.varname = varname.str;
         var op = items.shift();
         if (! op.isop('='))
-            return new ChunkBad();
+            return new ChunkBad;
         self.initexpr = parseExpr(items);
         n = items;
         if (n < 2)
-            return new ChunkBad();
+            return new ChunkBad;
         op = items.shift();
         if (! op.isidentifier('TO'))
-            return new ChunkBad();
+            return new ChunkBad;
         self.finalexpr = parseExpr(items);
         n = items;
         if (n > 0) {
             op = items.shift();
             if (!op.isidentifier('STEP'))
-                return new ChunkBad();
+                return new ChunkBad;
             self.stepexpr = parseExpr(items);
         }
     }
@@ -1803,7 +1801,7 @@ function parseNEXT(var items)
     else {
         var name = items.shift();
         if (name.type() != IDENTIFIER)
-            return new ChunkBad();
+            return new ChunkBad;
         n = items;
         if (n != 0)
             return new ChunkNEXT;
@@ -1907,7 +1905,7 @@ class ChunkPRINT
                 if (n > 0) {
                     item = items.shift();
                     if (!item.isop(','))
-                        return new ChunkBad();
+                        return new ChunkBad;
                 }
             }
         }
@@ -1969,21 +1967,21 @@ class ChunkLINE_INPUT
     {
         int n = items;
         if (n < 1)
-            return new ChunkBad();
+            return new ChunkBad;
         var item = items[0];
         if (item.isop('#')) {
             items.shift();
             self.channel = parseExpr(items);
             item = items.shift();
             if (!item.isop(','))
-                return new ChunkBad();
+                return new ChunkBad;
         }
         item = items.shift();
         if (item.type() != IDENTIFIER)
-            return new ChunkBad();
+            return new ChunkBad;
         string varname = item.checkidentifier();
         if (varname == '')
-            return new ChunkBad();
+            return new ChunkBad;
         self.varname = varname;
     }
     function execute(runner, line, int chunk)
@@ -2015,10 +2013,10 @@ function createChunkLINE(var items)
 {
     int n = items;
     if (n < 1)
-        return new ChunkBad();
+        return new ChunkBad;
     var item = items.shift();
     if (!item.isidentifier('INPUT'))
-        return new ChunkBad();
+        return new ChunkBad;
     return new ChunkLINE_INPUT(items);
 }
 
@@ -2032,7 +2030,7 @@ class ChunkOPEN
         self.filenameexpr = parseExpr(items);
         int n = items;
         if (n < 2)
-            return new ChunkBad();
+            return new ChunkBad;
         var item = items.shift();
         int mode = 0;
         int flags = 0;
@@ -2050,12 +2048,12 @@ class ChunkOPEN
                 mode = OPEN_output;
                 break;
             default:
-                return new ChunkBad();
+                return new ChunkBad;
             }
             item = items.shift();
         }
         if (!item.isidentifier('AS'))
-            return new ChunkBad();
+            return new ChunkBad;
         self.channelexpr = parseExpr(items);
         if (mode == 0)
             mode = OPEN_input;
@@ -2156,7 +2154,7 @@ class ChunkERROR
     {
         int n = items;
         if (n == 0)
-            return new ChunkBad();
+            return new ChunkBad;
         self.expr = parseExpr(items);
         return self;
     }
@@ -2251,7 +2249,7 @@ function createChunk(var items)
         if (item.isop("'"))
             return new ChunkComment(items);
     }
-    return new ChunkBad();
+    return new ChunkBad;
 }
 
 //**********************************************************************
